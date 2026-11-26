@@ -394,7 +394,7 @@ function refreshControls(): void {
   if (path.length === 0) {
     hint.textContent =
       me.legs === 0 && !(deepRun && (deepInfo?.depth ?? 1) > 1)
-        ? `${data?.nightBlurb ?? ''} Drag from your lantern toward the flame. Each number counts the bogs touching that tile.`
+        ? 'Drag from your lantern toward the flame. A number counts the bogs touching that tile.'
         : deepRun
           ? 'Reach the flame to drop into the next valley.'
           : me.unranked
@@ -896,7 +896,7 @@ function showDeepCard(d: DeepRsp): void {
       : `You crossed ${n} ${n === 1 ? 'valley' : 'valleys'}`
   $('deep-sub').textContent =
     d.deep.best > 0
-      ? `Your deepest run tonight: ${d.deep.best}. Only your best counts, so go again whenever you like.`
+      ? `Your best run tonight is ${d.deep.best} ${d.deep.best === 1 ? 'valley' : 'valleys'}. Only the best run counts, so go again whenever you like.`
       : 'Cross one valley to get on the board. Go again whenever you like.'
   const ol = $('deep-board')
   ol.replaceChildren()
@@ -1089,7 +1089,7 @@ async function showCard(d: TonightRsp): Promise<void> {
   const a = d.almanac
   $('card-rank').textContent =
     a.toNext !== null
-      ? `Rank: ${a.rank}. Light ${a.toNext} more ${a.toNext === 1 ? 'tile' : 'tiles'} to become a ${a.nextRank}.`
+      ? `Rank: ${a.rank}. ${a.toNext} more ${a.toNext === 1 ? 'tile' : 'tiles'} to ${a.nextRank}.`
       : `Rank: ${a.rank}, the highest there is.`
   $('card-relight').hidden = !(d.me.status === 'lost' && d.me.relights > 0)
   $('share-btn').textContent = 'Copy result'
@@ -1104,17 +1104,16 @@ async function showCard(d: TonightRsp): Promise<void> {
   )
   const total = row(dl, 'Score', r.total, 'total')
   const mins = Math.max(1, Math.round((d.nextAt - Date.now()) / 60_000))
-  const opens = `A new valley opens in ${Math.floor(mins / 60)} h ${mins % 60} min.`
+  const opens = `Next valley in ${Math.floor(mins / 60)} h ${mins % 60} min.`
   $('card-streak').textContent =
-    d.streak > 1
-      ? `${d.streak} nights in a row. ${opens}`
-      : `${opens} Come back to start a streak.`
+    d.streak > 1 ? `${d.streak} nights in a row. ${opens}` : opens
   if (d.glow >= 95)
     toast(toastEl, 'Your expedition has lit the whole valley.', 4000)
   $('card-guided').textContent =
     d.guided > 0
       ? `Your light has guided ${d.guided} ${d.guided === 1 ? 'walker' : 'walkers'} so far tonight.`
-      : 'When another walker uses a tile you lit, you will see it here.'
+      : ''
+  $('card-guided').hidden = d.guided === 0
   const bars = $('card-stats')
   bars.replaceChildren()
   const tally = d.stats ?? [0, 0, 0, 0]
@@ -1152,7 +1151,8 @@ async function showCard(d: TonightRsp): Promise<void> {
   countUp(total, r.total, 350)
   $<HTMLButtonElement>('card-deep').focus()
   const top = await fetchBoard()
-  if (failed(top)) return
+  // A board of one says nothing the score above has not.
+  if (failed(top) || top.top.length < 2) return
   for (const entry of top.top.slice(0, 3)) {
     const li = document.createElement('li')
     li.textContent = `${entry.name}, ${entry.score}`
@@ -1360,6 +1360,12 @@ async function init(): Promise<void> {
   loadFlags()
   refreshControls()
   journey.ready()
+  // Tonight's twist, said once as the board settles.
+  if (first.me.legs === 0 && !(first.yesterday && first.yesterday.guided > 0))
+    setTimeout(
+      () => toast(toastEl, `${first.nightName}: ${first.nightBlurb}`, 4600),
+      2400,
+    )
   if (first.yesterday && first.yesterday.guided > 0) {
     const g = first.yesterday.guided
     setTimeout(

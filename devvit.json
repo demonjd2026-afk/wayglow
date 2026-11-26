@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "wayglow",
+  "name": "wayglow-valley",
   "post": {
     "entrypoints": {
       "default": {
@@ -43,5 +43,8 @@
         "cron": "5 0 * * *"
       }
     }
+  },
+  "dev": {
+    "subreddit": "wayglow_valley_dev"
   }
 }

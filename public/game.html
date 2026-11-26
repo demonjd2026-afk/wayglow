@@ -415,6 +415,65 @@
       bottom: 10px;
     }
     </style>
+    <style>
+    #toast {
+      white-space: normal;
+      text-align: center;
+      border-radius: 18px;
+      width: max-content;
+    }
+    </style>
+    <style>
+    /* Cards cover the whole frame and never scroll: Reddit's inline frame is short. */
+    #card,
+    #deep-card {
+      position: fixed;
+      z-index: 5;
+      padding: 8px;
+    }
+    #card section {
+      gap: 7px;
+      padding: 16px 16px 14px;
+      max-height: none;
+      overflow: hidden;
+    }
+    #card h2 {
+      font-size: 22px;
+    }
+    #card p,
+    #card ol {
+      font-size: 12.5px;
+      line-height: 1.35;
+    }
+    #card dl {
+      font-size: 13px;
+      gap: 3px 12px;
+    }
+    #card .total {
+      font-size: 19px;
+      padding-top: 5px;
+    }
+    #card-stats div {
+      font-size: 10.5px;
+      gap: 3px;
+    }
+    #card .btn {
+      padding: 10px 18px;
+    }
+    #card .row .btn {
+      padding: 8px 8px;
+      font-size: 12.5px;
+    }
+    #card [hidden] {
+      display: none;
+    }
+    @media (max-height: 520px) {
+      #card-stats,
+      #card-board {
+        display: none;
+      }
+    }
+    </style>
   </head>
   <body>
     <canvas id="backdrop" aria-hidden="true"></canvas>
