@@ -1,6 +1,7 @@
 import {createHmac, randomBytes} from 'node:crypto'
 import {context, realtime, reddit, redis} from '@devvit/web/server'
 import type {
+  Almanac,
   BoardRsp,
   FlairRsp,
   LegReq,
@@ -18,6 +19,8 @@ import {
   generate,
   LANTERNS,
   MAX_LEGS,
+  MAX_RELIGHTS,
+  nightOf,
   reveal,
   score,
   simulate,
@@ -93,6 +96,7 @@ const k = {
   rate: (uid: string, minute: number) => `rl:${uid}:${minute}`,
   posted: (day: string) => `posted:${day}`,
   guide: (day: string) => `g:${day}`,
+  life: (uid: string) => `p:${uid}`,
   stats: (day: string) => `st:${day}`,
   roster: (day: string, exp: number) => `x:${day}:${exp}:who`,
   live: (second: number) => `rt:${second}`,
@@ -159,6 +163,8 @@ function meOf(u: Record<string, string>): Me {
     legs: Number(u.legs ?? 0),
     status,
     firstLight: Number(u.fl ?? 0),
+    relights: MAX_RELIGHTS - Number(u.rl ?? 0),
+    unranked: u.ur === '1',
   }
 }
 
@@ -187,7 +193,8 @@ async function seat(day: Day, who: Who): Promise<Record<string, string>> {
     await getSecret(),
     `sparks:${day.key}:${exp}:${who.id}`,
   )
-  for (const s of sparks(valley, sparkSeed)) {
+  const night = nightOf(day.weekday)
+  for (const s of sparks(valley, sparkSeed, night.sparks)) {
     for (const t of reveal(valley, lit, s)) {
       fields[t] = who.id
       brought++
@@ -197,7 +204,7 @@ async function seat(day: Day, who: Who): Promise<Record<string, string>> {
   const u: Record<string, string> = {
     exp: `${exp}`,
     pos: `${CAMP}`,
-    lan: `${LANTERNS}`,
+    lan: `${night.lanterns}`,
     steps: '0',
     legs: '0',
     st: 'walking',
@@ -250,6 +257,31 @@ async function bumpStreak(uid: string, now: number): Promise<void> {
   await redis.expire(key, TTL_S)
 }
 
+/** Ranks by tiles lit first across all nights. */
+const RANKS: readonly [number, string][] = [
+  [0, 'Spark'],
+  [25, 'Candle'],
+  [75, 'Lantern'],
+  [200, 'Beacon'],
+  [500, 'Lighthouse'],
+]
+
+function almanacOf(p: Record<string, string>): Almanac {
+  const lit = Number(p.lit ?? 0)
+  let at = 0
+  for (const [i, [need]] of RANKS.entries()) if (lit >= need) at = i
+  const next = RANKS[at + 1]
+  return {
+    nights: Number(p.nights ?? 0),
+    crossed: Number(p.crossed ?? 0),
+    lit,
+    best: Number(p.best ?? 0),
+    rank: (RANKS[at] as [number, string])[1],
+    toNext: next ? next[0] - lit : null,
+    nextRank: next ? next[1] : null,
+  }
+}
+
 function rosterOf(
   hash: Record<string, string>,
 ): Map<string, Walker & {order: number}> {
@@ -275,8 +307,9 @@ async function view(
   const valley = await valleyOf(day, exp)
   const me = meOf(u)
   const over = me.status !== 'walking'
-  const [litHash, sunkHash, walkers, streak, guided, rosterHash, stats] =
+  const [life, litHash, sunkHash, walkers, streak, guided, rosterHash, stats] =
     await Promise.all([
+      redis.hGetAll(k.life(who.id)),
       redis.hGetAll(k.lit(day.key, exp)),
       redis.hGetAll(k.sunk(day.key, exp)),
       redis.hGet(k.meta(day.key, exp), 'walkers'),
@@ -286,6 +319,16 @@ async function view(
       over ? redis.hGetAll(k.stats(day.key)) : Promise.resolve(null),
     ])
   const roster = rosterOf(rosterHash)
+  const live = {
+    ...score(
+      me.status === 'arrived',
+      me.lanterns,
+      me.steps,
+      valley.par,
+      me.firstLight,
+    ),
+    par: valley.par,
+  }
   const lit: [number, number][] = Object.keys(litHash).map(t => [
     Number(t),
     valley.counts[Number(t)] ?? 0,
@@ -293,7 +336,14 @@ async function view(
   return {
     day: day.key,
     night: day.night,
+    nightName: nightOf(day.weekday).name,
+    nightBlurb: nightOf(day.weekday).blurb,
+    lanternsMax: nightOf(day.weekday).lanterns,
     expedition: exp + 1,
+    glow: Math.round(
+      (100 * lit.length) / (TILES - valley.bogs.filter(Boolean).length),
+    ),
+    almanac: almanacOf(life),
     lit,
     sunk: Object.keys(sunkHash).map(Number),
     sunkBy: Object.entries(sunkHash).map(([t, uid]) => [
@@ -309,22 +359,21 @@ async function view(
     streak: streak.n,
     streakSaved: streak.saved,
     guided: Number(guided ?? 0),
-    result: over
-      ? {
-          ...score(
-            me.status === 'arrived',
-            me.lanterns,
-            me.steps,
-            valley.par,
-            me.firstLight,
-          ),
-          par: valley.par,
-        }
-      : null,
+    result: frozen(u) ?? (over ? live : null),
     stats: stats ? [0, 1, 2, 3].map(i => Number(stats[i] ?? 0)) : null,
     yesterday: null,
     channel: channelOf(day, exp),
     nextAt: day.nextAt,
+  }
+}
+
+/** The ranked result, fixed when the walk first ended; walking on never changes it. */
+function frozen(u: Record<string, string>): TonightRsp['result'] {
+  if (!u.res) return null
+  try {
+    return JSON.parse(u.res) as TonightRsp['result']
+  } catch {
+    return null
   }
 }
 
@@ -439,23 +488,34 @@ export async function leg(
       fl: `${me.firstLight + fresh}`,
       gu: [...thanked].join(','),
     }
+    const ended = status !== 'walking'
+    const ranked = ended && !me.unranked
+    const parts = score(
+      out.arrived,
+      lanterns,
+      Number(next.steps),
+      valley.par,
+      Number(next.fl),
+    )
+    if (ranked) next.res = JSON.stringify({...parts, par: valley.par})
     await redis.hSet(ukey, next)
     if (me.legs === 0) {
       await bumpStreak(who.id, now)
       await expire(k.sunk(day.key, exp))
     }
-    if (status !== 'walking') {
-      const total = score(
-        out.arrived,
-        lanterns,
-        Number(next.steps),
-        valley.par,
-        Number(next.fl),
-      ).total
-      await redis.zAdd(k.board(day.key), {member: who.name, score: total})
+    const lifeKey = k.life(who.id)
+    if (fresh > 0) await redis.hIncrBy(lifeKey, 'lit', fresh)
+    if (ranked) {
+      await redis.zAdd(k.board(day.key), {member: who.name, score: parts.total})
       await redis.hIncrBy(k.stats(day.key), `${out.arrived ? lanterns : 0}`, 1)
+      await redis.hIncrBy(lifeKey, 'nights', 1)
+      if (out.arrived) await redis.hIncrBy(lifeKey, 'crossed', 1)
+      const best = Number((await redis.hGet(lifeKey, 'best')) ?? 0)
+      if (parts.total > best)
+        await redis.hSet(lifeKey, {best: `${parts.total}`})
       await expire(k.board(day.key), k.stats(day.key))
     }
+    if (fresh > 0 || ranked) await expire(lifeKey)
     if (fresh > 0 || out.sunkAt !== null || out.arrived) {
       await announce(
         day,
@@ -508,10 +568,49 @@ export async function peek(
   }
   return {
     night: day.night,
+    nightName: nightOf(day.weekday).name,
     walkersToday,
     litPct,
     status: u.name ? meOf(u).status : 'new',
     streak: streak.n,
+  }
+}
+
+/**
+ * A lost walker relights one lantern and walks on. The night's score is
+ * already fixed; what they light and mark from here still helps the expedition.
+ */
+export async function relight(
+  who: Who,
+  now: number = Date.now(),
+): Promise<TonightRsp> {
+  await rateLimit(who.id, now)
+  const day = dayOf(now)
+  const ukey = k.user(day.key, who.id)
+  const lockKey = k.lock(day.key, who.id)
+  const held = await redis.set(lockKey, '1', {
+    nx: true,
+    expiration: new Date(now + LOCK_MS),
+  })
+  if (!held) throw new HttpError(409, 'previous step still landing')
+  try {
+    const u = await redis.hGetAll(ukey)
+    const me = meOf(u)
+    if (!u.name || me.status !== 'lost')
+      throw new HttpError(409, 'nothing to relight')
+    if (me.relights <= 0)
+      throw new HttpError(409, 'no lanterns left to relight')
+    const next = {
+      ...u,
+      st: 'walking',
+      lan: '1',
+      rl: `${Number(u.rl ?? 0) + 1}`,
+      ur: '1',
+    }
+    await redis.hSet(ukey, next)
+    return await view(day, who, next, now)
+  } finally {
+    await redis.del(lockKey)
   }
 }
 

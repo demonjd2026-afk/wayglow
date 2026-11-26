@@ -15,6 +15,7 @@ import {
   type HttpError,
   leg,
   peek,
+  relight,
   tonight,
   wearFlair,
 } from './game.ts'
@@ -68,7 +69,10 @@ test('seating is idempotent and never reveals a bog', async () => {
     assert.equal(v.bogs[tile], false)
     assert.equal(count, v.counts[tile])
   }
-  assert.ok(!JSON.stringify(first).includes('bogs'))
+  // Nothing in the reply may carry the hidden map: no key for it, no array as long as the valley.
+  assert.ok(!JSON.stringify(first).includes('"bogs"'))
+  for (const value of Object.values(first))
+    assert.ok(!Array.isArray(value) || value.length < TILES)
 })
 
 test('a clean crossing scores, reveals par and joins the board', async () => {
@@ -254,6 +258,94 @@ test('last night shows up once, before the first step of a new night', async () 
 
 test('flair is refused without a streak', async () => {
   await assert.rejects(wearFlair(ana, NOW), (e: HttpError) => e.status === 409)
+})
+
+test('a lost walker can relight and walk on without changing the ranked result', async () => {
+  await tonight(ana, NOW)
+  await assert.rejects(relight(ana, NOW), (e: HttpError) => e.status === 409)
+  const v = await hidden()
+  // Walk the safe route until a bog is beside it, then step in until the lanterns run out.
+  let pos = CAMP
+  let legNo = 1
+  let last = await leg(
+    ana,
+    {leg: legNo++, path: [safeRoute(v.bogs)[0] as number]},
+    NOW,
+  )
+  pos = last.me.pos
+  const rest = safeRoute(v.bogs).slice(1)
+  let bog: number | undefined
+  while (bog === undefined) {
+    bog = neighbors4(pos).find(n => v.bogs[n])
+    if (bog !== undefined) break
+    last = await leg(ana, {leg: legNo++, path: [rest.shift() as number]}, NOW)
+    pos = last.me.pos
+  }
+  while (last.me.status === 'walking')
+    last = await leg(ana, {leg: legNo++, path: [bog]}, NOW)
+  assert.equal(last.me.status, 'lost')
+  const lostResult = last.result
+  const boardBefore = await board(NOW)
+
+  const relit = await relight(ana, NOW)
+  assert.deepEqual(
+    [relit.me.status, relit.me.lanterns, relit.me.unranked, relit.me.relights],
+    ['walking', 1, true, 2],
+  )
+  assert.deepEqual(relit.result, lostResult)
+  const done = await leg(ana, {leg: legNo++, path: rest}, NOW)
+  assert.equal(done.me.status, 'arrived')
+  assert.deepEqual(done.result, lostResult)
+  assert.deepEqual(await board(NOW), boardBefore)
+  assert.deepEqual(done.stats, [1, 0, 0, 0])
+  assert.equal(done.almanac.nights, 1)
+  assert.equal(done.almanac.crossed, 0)
+})
+
+test('relights run out after three', async () => {
+  await tonight(ana, NOW)
+  const v = await hidden()
+  let pos = CAMP
+  let legNo = 1
+  const route = safeRoute(v.bogs)
+  let bog = neighbors4(pos).find(n => v.bogs[n])
+  while (bog === undefined) {
+    pos = (await leg(ana, {leg: legNo++, path: [route.shift() as number]}, NOW))
+      .me.pos
+    bog = neighbors4(pos).find(n => v.bogs[n])
+  }
+  const sink = async (): Promise<void> => {
+    let st = 'walking'
+    while (st === 'walking')
+      st = (await leg(ana, {leg: legNo++, path: [bog as number]}, NOW)).me
+        .status
+  }
+  await sink()
+  for (let i = 0; i < 3; i++) {
+    await relight(ana, NOW)
+    await sink()
+  }
+  await assert.rejects(relight(ana, NOW), (e: HttpError) => e.status === 409)
+})
+
+test('each night has a name, and a crossing builds the almanac', async () => {
+  const start = await tonight(ana, NOW)
+  assert.equal(start.nightName, 'Marsh night')
+  assert.equal(start.lanternsMax, 3)
+  assert.equal(start.almanac.rank, 'Spark')
+  const v = await hidden()
+  const done = await leg(ana, {leg: 1, path: safeRoute(v.bogs)}, NOW)
+  assert.ok(done.glow > start.glow && done.glow <= 100)
+  assert.equal(done.almanac.nights, 1)
+  assert.equal(done.almanac.crossed, 1)
+  assert.equal(done.almanac.best, done.result?.total)
+  assert.equal(done.almanac.lit, done.me.firstLight - start.me.firstLight)
+  assert.equal((await peek(undefined, NOW)).nightName, 'Marsh night')
+  const sat = await tonight(ana, NOW + 86_400_000)
+  assert.deepEqual(
+    [sat.nightName, sat.me.lanterns, sat.lanternsMax],
+    ['Deep marsh', 4, 4],
+  )
 })
 
 test('the daily post can only be claimed once', async () => {

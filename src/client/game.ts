@@ -6,8 +6,8 @@ import {
   BEACON,
   CAMP,
   H,
-  LANTERNS,
   MAX_PATH,
+  sense,
   TILES,
   W,
   xOf,
@@ -19,6 +19,7 @@ import {
   fetchBoard,
   fetchFlair,
   fetchLeg,
+  fetchRelight,
   fetchTonight,
 } from './fetch.ts'
 import {calm, clamp01, countUp, EASE, easeOutBack, jolt, springy} from './fx.ts'
@@ -39,6 +40,8 @@ const card = $('card')
 const toastEl = $('toast')
 const facesEl = $('faces')
 const soundBtn = $<HTMLButtonElement>('sound-btn')
+const resultBtn = $<HTMLButtonElement>('result-btn')
+const relightBtn = $<HTMLButtonElement>('relight-btn')
 const fog = backdrop($<HTMLCanvasElement>('backdrop'), calm)
 
 const STEP_MS = calm ? 40 : 150
@@ -68,6 +71,12 @@ let hover = -1
 let flags = new Set<number>()
 let sunkBy = new Map<number, string>()
 let live = false
+/** What the visible counts already prove about dark tiles. */
+let proof: {dry: Set<number>; bog: Set<number>} = {
+  dry: new Set(),
+  bog: new Set(),
+}
+let touched = false
 let introAt = Number.POSITIVE_INFINITY
 let walker = {x: xOf(CAMP), y: yOf(CAMP)}
 let ripple: {tile: number; at: number} | undefined
@@ -217,14 +226,19 @@ function adopt(next: TonightRsp, bornAt?: (tile: number) => number): void {
   sunkBy = new Map(next.sunkBy)
   for (const t of flags) if (lit.has(t) || sunk.has(t)) flags.delete(t)
   showFaces(facesEl, next.roster)
-  where.textContent = `Night ${next.night}, ${next.walkers === 1 ? 'you are first out' : `${next.walkers} walkers out`}`
-  const pips = lanternsEl.querySelectorAll('i')
-  pips.forEach((pip, i) => {
+  proof = sense(lit, sunk)
+  const out =
+    next.walkers === 1 ? 'You are first out' : `${next.walkers} walkers out`
+  where.textContent = `${next.nightName}. ${out}, valley ${next.glow}% lit`
+  where.title = next.nightBlurb
+  while (lanternsEl.childElementCount < next.lanternsMax)
+    lanternsEl.append(document.createElement('i'))
+  Array.from(lanternsEl.children).forEach((pip, i) => {
     pip.classList.toggle('out', i >= next.me.lanterns)
   })
   lanternsEl.setAttribute(
     'aria-label',
-    `${next.me.lanterns} of ${LANTERNS} lanterns left`,
+    `${next.me.lanterns} of ${next.lanternsMax} lanterns left`,
   )
   if (lost) jolt(lanternsEl, 5)
 }
@@ -299,6 +313,7 @@ function canStep(tile: number): boolean {
     tile < 0 ||
     sunk.has(tile) ||
     flags.has(tile) ||
+    proof.bog.has(tile) ||
     path.length >= MAX_PATH
   )
     return false
@@ -313,6 +328,12 @@ function canStep(tile: number): boolean {
 
 function plan(tile: number): void {
   if (!data || tile < 0 || !canPlan()) return
+  touched = true
+  if (proof.bog.has(tile) && adjacent4(path.at(-1) ?? data.me.pos, tile)) {
+    hint.textContent =
+      'The numbers around that tile already prove it is a bog. Your lantern will not step there.'
+    return
+  }
   const before = path.length
   if (tile === data.me.pos) path = []
   else {
@@ -332,6 +353,9 @@ function refreshControls(): void {
   const over = me !== undefined && me.status !== 'walking'
   walkBtn.hidden = over
   undoBtn.hidden = over
+  resultBtn.hidden = !over
+  relightBtn.hidden = !(me?.status === 'lost' && me.relights > 0)
+  if (me) relightBtn.textContent = `Relight (${me.relights} left)`
   walkBtn.disabled = !canPlan() || path.length === 0
   undoBtn.disabled = !canPlan() || path.length === 0
   walkBtn.textContent =
@@ -341,17 +365,25 @@ function refreshControls(): void {
   if (!me || busy) return
   if (over) {
     hint.textContent =
-      'Your walk is over. The lights you left stay on for everyone tonight.'
+      me.status === 'lost' && me.relights > 0
+        ? 'Lanterns out. Relight one to walk on, unranked.'
+        : 'Your walk is over. The lights you left stay on for everyone tonight.'
     return
   }
-  const blind = path.filter(t => !lit.has(t)).length
+  const dark = path.filter(t => !lit.has(t))
+  const gambles = dark.filter(t => !proof.dry.has(t)).length
   if (path.length === 0) {
     hint.textContent =
       me.legs === 0
-        ? 'Drag from your lantern toward the flame. Each number counts the bogs touching that tile.'
-        : 'Drag from your lantern to plan the next stretch.'
-  } else if (blind > 0) {
-    hint.textContent = `${blind} ${blind === 1 ? 'step' : 'steps'} into the dark. A bog there costs a lantern.`
+        ? `${data?.nightBlurb ?? ''} Drag from your lantern toward the flame. Each number counts the bogs touching that tile.`
+        : me.unranked
+          ? 'Walking on, unranked. Drag from your lantern to plan the next stretch.'
+          : 'Drag from your lantern to plan the next stretch.'
+  } else if (gambles > 0) {
+    hint.textContent = `${gambles} ${gambles === 1 ? 'step is a gamble' : 'steps are gambles'}. A bog there costs a lantern.`
+  } else if (dark.length > 0) {
+    hint.textContent =
+      'Dark, but the numbers prove every step dry. Safe to walk.'
   } else {
     hint.textContent = 'All on lit ground. Safe to walk.'
   }
@@ -523,11 +555,53 @@ function draw(now: number): void {
     trace()
     ctx.stroke()
     ctx.setLineDash([])
+    // On each dark step: a tick where the numbers prove it dry, a question mark where it is a gamble.
+    ctx.font = `700 ${Math.round(size * 0.3)}px system-ui, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const t of path) {
+      if (lit.has(t)) continue
+      const [mx, my] = centre(t)
+      const sure = proof.dry.has(t)
+      ctx.fillStyle = sure ? '#36c9b4' : '#ff9f5e'
+      ctx.beginPath()
+      ctx.arc(mx + size * 0.26, my - size * 0.26, size * 0.17, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#0b1020'
+      ctx.fillText(sure ? '\u2713' : '?', mx + size * 0.26, my - size * 0.25)
+    }
     const [ex, ey] = centre(path.at(-1) as number)
     const beat = calm ? 0 : Math.sin(now / 240) * size * 0.025
     ctx.beginPath()
     ctx.arc(ex, ey, size * 0.17 + beat, 0, Math.PI * 2)
     ctx.stroke()
+  }
+
+  // First night only: a ghost shows the gesture until the walker makes one.
+  if (
+    data &&
+    !touched &&
+    !calm &&
+    data.almanac.nights === 0 &&
+    data.me.legs === 0 &&
+    now > introAt + 1800
+  ) {
+    const p = ((now - introAt) / 1500) % 1
+    const [gx, gy] = centre(data.me.pos)
+    const reach = Math.min(1, p * 1.5) * size * 2
+    ctx.globalAlpha = Math.sin(Math.PI * p) * 0.9
+    ctx.strokeStyle = '#fff1cf'
+    ctx.lineWidth = Math.max(3, size * 0.08)
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(gx, gy - size * 0.45)
+    ctx.lineTo(gx, gy - size * 0.45 - reach)
+    ctx.stroke()
+    ctx.fillStyle = '#fff1cf'
+    ctx.beginPath()
+    ctx.arc(gx, gy - size * 0.45 - reach, size * 0.13, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
   }
 
   // Counts sit above the route so they always stay readable.
@@ -726,7 +800,8 @@ async function walk(): Promise<void> {
       )
     }
   } else {
-    journey.end(rsp.me.status === 'arrived', rsp.result?.total ?? 0)
+    if (!rsp.me.unranked)
+      journey.end(rsp.me.status === 'arrived', rsp.result?.total ?? 0)
     void showCard(rsp)
   }
 }
@@ -782,6 +857,56 @@ async function play(rsp: LegRsp): Promise<void> {
   }
 }
 
+/** A spoiler-safe summary for the comments: the valley as this expedition has lit it. */
+function shareText(d: TonightRsp): string {
+  const r = d.result
+  const rows: string[] = []
+  for (let y = 0; y < H; y++) {
+    let line = ''
+    for (let x = 0; x < W; x++) {
+      const t = y * W + x
+      line +=
+        t === BEACON
+          ? '\u{1F525}'
+          : sunk.has(t)
+            ? '\u{1F300}'
+            : lit.has(t)
+              ? '\u{1F7E8}'
+              : '\u{1F7E6}'
+    }
+    rows.push(line)
+  }
+  const kept = r ? r.lanterns / 100 : 0
+  const how =
+    kept > 0
+      ? `Reached the flame with ${kept} of ${d.lanternsMax} lanterns`
+      : 'Lanterns out before the flame'
+  return [
+    `Wayglow night ${d.night}, ${d.nightName}`,
+    `${how}. Score ${r?.total ?? 0}.`,
+    `Lit ${d.me.firstLight} tiles first, guided ${d.guided} ${d.guided === 1 ? 'walker' : 'walkers'}. Valley ${d.glow}% lit.`,
+    ...rows,
+  ].join('\n')
+}
+
+async function copy(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    // Some webviews block the clipboard API; the old selection route often still works.
+    const area = document.createElement('textarea')
+    area.value = text
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.append(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    area.remove()
+    return ok
+  }
+}
+
 function row(
   dl: HTMLElement,
   label: string,
@@ -804,24 +929,47 @@ async function showCard(d: TonightRsp): Promise<void> {
   const r = d.result
   if (!r) return
   const arrived = d.me.status === 'arrived'
-  $('card-title').textContent = arrived
-    ? 'You reached the flame'
-    : 'Your lanterns are out'
-  $('card-sub').textContent = arrived
-    ? `Crossed in ${d.me.steps} steps. The shortest dry route tonight was ${r.par}.`
-    : `You lit ${d.me.firstLight} tiles that the next walkers can now trust.`
+  const total0 = r.total
+  if (d.me.unranked) {
+    $('card-title').textContent = arrived
+      ? 'You reached the flame after all'
+      : 'Your lanterns are out'
+    $('card-sub').textContent = arrived
+      ? `You walked on and made it. Tonight's ranked score stays at ${total0}.`
+      : `Tonight's ranked score stays at ${total0}. Everything you lit stays lit.`
+  } else {
+    $('card-title').textContent = arrived
+      ? 'You reached the flame'
+      : 'Your lanterns are out'
+    $('card-sub').textContent = arrived
+      ? `Crossed in ${d.me.steps} steps. The shortest dry route tonight was ${r.par}.`
+      : `You lit ${d.me.firstLight} ${d.me.firstLight === 1 ? 'tile' : 'tiles'} that the next walkers can now trust.`
+  }
+  const a = d.almanac
+  $('card-rank').textContent =
+    a.toNext !== null
+      ? `Rank: ${a.rank}. Light ${a.toNext} more ${a.toNext === 1 ? 'tile' : 'tiles'} to become a ${a.nextRank}.`
+      : `Rank: ${a.rank}, the highest there is.`
+  $('card-relight').hidden = !(d.me.status === 'lost' && d.me.relights > 0)
+  $('share-btn').textContent = 'Copy my crossing'
   const dl = $('card-score')
   dl.replaceChildren()
-  row(dl, `Lanterns kept (${arrived ? d.me.lanterns : 0})`, r.lanterns)
+  row(dl, `Lanterns kept (${r.lanterns / 100})`, r.lanterns)
   row(dl, 'Route', r.route)
-  row(dl, `First light (${d.me.firstLight} tiles)`, r.light)
-  const total = row(dl, `Night ${d.night}`, r.total, 'total')
+  row(
+    dl,
+    `First light (${r.light / 2} ${r.light === 2 ? 'tile' : 'tiles'})`,
+    r.light,
+  )
+  const total = row(dl, 'Score', r.total, 'total')
   const mins = Math.max(1, Math.round((d.nextAt - Date.now()) / 60_000))
   const opens = `A new valley opens in ${Math.floor(mins / 60)} h ${mins % 60} min.`
   $('card-streak').textContent =
     d.streak > 1
       ? `${d.streak} nights in a row. ${opens}`
       : `${opens} Come back to start a streak.`
+  if (d.glow >= 95)
+    toast(toastEl, 'Your expedition has lit the whole valley.', 4000)
   $('card-guided').textContent =
     d.guided > 0
       ? `Your light has guided ${d.guided} ${d.guided === 1 ? 'walker' : 'walkers'} so far tonight.`
@@ -830,7 +978,7 @@ async function showCard(d: TonightRsp): Promise<void> {
   bars.replaceChildren()
   const tally = d.stats ?? [0, 0, 0, 0]
   const most = Math.max(1, ...tally)
-  const mine = arrived ? d.me.lanterns : 0
+  const mine = r.lanterns / 100
   for (const [i, label] of ['Lost', '1 left', '2 left', '3 left'].entries()) {
     const col = document.createElement('div')
     const bar = document.createElement('i')
@@ -994,6 +1142,39 @@ async function init(): Promise<void> {
     refreshControls()
   })
   $('card-close').addEventListener('click', () => card.classList.remove('show'))
+  resultBtn.addEventListener('click', () => {
+    if (data) void showCard(data)
+  })
+  const walkOn = async (): Promise<void> => {
+    if (busy) return
+    busy = true
+    const rsp = await fetchRelight()
+    busy = false
+    if (failed(rsp)) {
+      hint.textContent = 'That lantern would not catch. Try again.'
+      return
+    }
+    card.classList.remove('show')
+    journey.act('relight')
+    sfx.plan(4)
+    adopt(rsp)
+    walker = {x: xOf(rsp.me.pos), y: yOf(rsp.me.pos)}
+    refreshControls()
+  }
+  relightBtn.addEventListener('click', () => void walkOn())
+  $('card-relight').addEventListener('click', () => void walkOn())
+  $('share-btn').addEventListener('click', ev => {
+    if (!data) return
+    const btn = ev.currentTarget as HTMLButtonElement
+    journey.act('share')
+    void copy(shareText(data)).then(ok => {
+      btn.textContent = ok
+        ? 'Copied. Paste it in the comments.'
+        : 'Could not copy on this device'
+    })
+  })
+  for (const b of [resultBtn, relightBtn, $('card-relight'), $('share-btn')])
+    springy(b)
 
   const first = await fetchTonight()
   const loader = $('loader')

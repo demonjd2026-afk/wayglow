@@ -54,3 +54,5 @@ export const fetchLeg = (req: LegReq): Promise<LegRsp | Failure> =>
   call<LegRsp>(Endpoint.Leg, req)
 export const fetchFlair = (): Promise<FlairRsp | Failure> =>
   call<FlairRsp>(Endpoint.Flair, {})
+export const fetchRelight = (): Promise<TonightRsp | Failure> =>
+  call<TonightRsp>(Endpoint.Relight, {})

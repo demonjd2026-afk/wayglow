@@ -5,11 +5,13 @@ import {
   CAMP,
   campLight,
   generate,
-  LANTERNS,
+  type Night,
   neighbors4,
   neighbors8,
+  nightOf,
   reveal,
   score,
+  sense,
   shortest,
   simulate,
   sparks,
@@ -103,18 +105,22 @@ test('score rewards lanterns, short routes and first light', () => {
  * A careful walker: deduces what the counts prove, walks proven-safe ground,
  * and only gambles when nothing is certain. Used to tune bog density.
  */
-function bot(v: Valley, sparkSeed: number): boolean {
-  return botRun(v, sparkSeed) > 0
+function bot(v: Valley, sparkSeed: number, night: Night): boolean {
+  return botRun(v, sparkSeed, night) > 0
 }
 
 /** Lanterns left on arrival, or 0 when the walker is lost. */
-export function botRun(v: Valley, sparkSeed: number): number {
+export function botRun(
+  v: Valley,
+  sparkSeed: number,
+  night: Night = nightOf(0),
+): number {
   const lit = new Set<number>()
   const known = new Set<number>()
   campLight(v, lit)
-  for (const s of sparks(v, sparkSeed)) reveal(v, lit, s)
+  for (const s of sparks(v, sparkSeed, night.sparks)) reveal(v, lit, s)
   let pos = CAMP
-  let lanterns = LANTERNS
+  let lanterns = night.lanterns
   for (let guard = 0; guard < 400 && lanterns > 0; guard++) {
     const safe = new Set<number>(lit)
     for (let changed = true; changed; ) {
@@ -187,12 +193,25 @@ test('a careful first walker usually crosses a dark valley', () => {
     let wins = 0
     const runs = 400
     for (let s = 0; s < runs; s++)
-      if (bot(generate(s * 31 + weekday, weekday), s)) wins++
+      if (bot(generate(s * 31 + weekday, weekday), s, nightOf(weekday))) wins++
     const rate = wins / runs
     console.log(
-      `weekday ${weekday}: careful first walker crosses ${(rate * 100).toFixed(0)}%`,
+      `${nightOf(weekday).name}: careful first walker crosses ${(rate * 100).toFixed(0)}%`,
     )
     assert.ok(rate > 0.75, `weekday ${weekday} too harsh: ${rate}`)
     assert.ok(rate < 0.99, `weekday ${weekday} too easy: ${rate}`)
+  }
+})
+
+test('lantern sense proves only what is certain', () => {
+  for (let seed = 0; seed < 200; seed++) {
+    const v = generate(seed, seed % 7)
+    const litSet = new Set<number>()
+    campLight(v, litSet)
+    for (const sp of sparks(v, seed, 4)) reveal(v, litSet, sp)
+    const lit = new Map([...litSet].map(t => [t, v.counts[t] as number]))
+    const {dry, bog} = sense(lit, new Set())
+    for (const t of dry) assert.equal(v.bogs[t], false)
+    for (const t of bog) assert.equal(v.bogs[t], true)
   }
 })

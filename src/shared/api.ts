@@ -12,15 +12,39 @@ export type Me = {
   legs: number
   status: WalkStatus
   firstLight: number
+  /** Lanterns this walker may still relight after losing all of them. */
+  relights: number
+  /** True once the walker has relit a lantern; the night's score is then fixed. */
+  unranked: boolean
 }
 
 export type Walker = {name: string; avatar: string | null}
+
+/** A walker's record across nights. */
+export type Almanac = {
+  nights: number
+  crossed: number
+  /** Tiles lit first, all nights together. */
+  lit: number
+  best: number
+  rank: string
+  /** Tiles still to light before the next rank, or null at the top. */
+  toNext: number | null
+  nextRank: string | null
+}
 
 /** Everything a walker may know about tonight. Never includes dark tiles. */
 export type TonightRsp = {
   day: string
   night: number
+  /** Tonight's character, such as Thick fog. */
+  nightName: string
+  nightBlurb: string
+  lanternsMax: number
   expedition: number
+  /** Share of this valley's dry tiles lit so far, 0 to 100. */
+  glow: number
+  almanac: Almanac
   /** [tile, bogs touching it] for every lit tile. */
   lit: [number, number][]
   /** Bogs marked by sunk lanterns. */
@@ -64,6 +88,7 @@ export type LiveMsg = {by: string; lit: number; sunk: boolean; arrived: boolean}
 /** Read-only summary for the feed card. Never seats the viewer. */
 export type PeekRsp = {
   night: number
+  nightName: string
   walkersToday: number
   /** How much of the newest valley is lit, 0 to 100. */
   litPct: number
@@ -81,6 +106,7 @@ export const Endpoint = {
   Leg: 'api/leg',
   Board: 'api/board',
   Flair: 'api/flair',
+  Relight: 'api/relight',
   OnAppInstall: 'internal/on/app/install',
   OnMenuNewPost: 'internal/on/menu/new-post',
   OnDailyPost: 'internal/cron/daily-post',
@@ -92,6 +118,7 @@ export const EndpointMethod = {
   [Endpoint.Leg]: 'POST',
   [Endpoint.Board]: 'GET',
   [Endpoint.Flair]: 'POST',
+  [Endpoint.Relight]: 'POST',
   [Endpoint.OnAppInstall]: 'POST',
   [Endpoint.OnMenuNewPost]: 'POST',
   [Endpoint.OnDailyPost]: 'POST',

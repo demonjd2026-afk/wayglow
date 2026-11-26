@@ -10,6 +10,8 @@ export const TILES: number = W * H
 export const CAMP: number = (H - 1) * W + 3
 export const BEACON = 3
 export const LANTERNS = 3
+/** Lanterns a lost walker may relight to walk on, unranked. */
+export const MAX_RELIGHTS = 3
 export const MAX_PATH = 48
 /** Far above any real walk; one tile at a time across the whole valley fits. */
 export const MAX_LEGS = 120
@@ -89,10 +91,76 @@ export function adjacent4(a: number, b: number): boolean {
   return dx + dy === 1
 }
 
-/** Bog density by UTC weekday (0 = Sunday). Gentle Monday, hardest Saturday. */
+/** Each night of the week has its own character. */
+export type Night = {
+  readonly name: string
+  readonly blurb: string
+  /** Share of tiles that are bogs. */
+  readonly density: number
+  /** Dry tiles each walker lights on arrival. */
+  readonly sparks: number
+  readonly lanterns: number
+}
+
+/** Indexed by UTC weekday, Sunday first. */
+export const NIGHTS: readonly Night[] = [
+  {
+    name: 'Long dark',
+    blurb: 'A plain night: three lanterns, three sparks.',
+    density: 0.2,
+    sparks: 3,
+    lanterns: 3,
+  },
+  {
+    name: 'Gentle night',
+    blurb: 'Fewer bogs, and an extra spark for every walker.',
+    density: 0.17,
+    sparks: 4,
+    lanterns: 3,
+  },
+  {
+    name: 'Firefly night',
+    blurb: 'Every walker arrives with six sparks.',
+    density: 0.2,
+    sparks: 6,
+    lanterns: 3,
+  },
+  {
+    name: 'Still night',
+    blurb: 'A plain night: three lanterns, three sparks.',
+    density: 0.2,
+    sparks: 3,
+    lanterns: 3,
+  },
+  {
+    name: 'Thick fog',
+    blurb: 'Each walker brings a single spark. Lean on each other.',
+    density: 0.2,
+    sparks: 1,
+    lanterns: 3,
+  },
+  {
+    name: 'Marsh night',
+    blurb: 'More bogs than usual.',
+    density: 0.23,
+    sparks: 3,
+    lanterns: 3,
+  },
+  {
+    name: 'Deep marsh',
+    blurb: 'The most bogs of the week, and a fourth lantern.',
+    density: 0.26,
+    sparks: 3,
+    lanterns: 4,
+  },
+]
+
+export function nightOf(weekday: number): Night {
+  return NIGHTS[((weekday % 7) + 7) % 7] as Night
+}
+
 export function density(weekday: number): number {
-  const table = [0.2, 0.18, 0.19, 0.2, 0.21, 0.22, 0.24]
-  return table[((weekday % 7) + 7) % 7] ?? 0.2
+  return nightOf(weekday).density
 }
 
 /** Fewest safe steps from camp to beacon, or -1 when the bogs wall it off. */
@@ -187,7 +255,7 @@ export function campLight(valley: Valley, lit: Set<number>): number[] {
  * The sparks a walker brings: three dry tiles in the upper valley that light
  * for the whole expedition when they arrive.
  */
-export function sparks(valley: Valley, seed: number): number[] {
+export function sparks(valley: Valley, seed: number, count = 3): number[] {
   const rand = rng(seed)
   const pool: number[] = []
   for (let i = 0; i < TILES; i++) {
@@ -195,7 +263,7 @@ export function sparks(valley: Valley, seed: number): number[] {
     if (!valley.bogs[i] && y >= 1 && y <= H - 4) pool.push(i)
   }
   const out: number[] = []
-  while (out.length < 3 && pool.length > 0) {
+  while (out.length < count && pool.length > 0) {
     const k = Math.floor(rand() * pool.length)
     out.push(pool.splice(k, 1)[0] as number)
   }
@@ -251,4 +319,32 @@ export function score(
   const route = arrived ? Math.max(0, 100 - 4 * Math.max(0, steps - par)) : 0
   const light = 2 * firstLight
   return {lanterns, route, light, total: lanterns + route + light}
+}
+
+/**
+ * What the visible counts already prove about dark tiles, using the one rule
+ * every player learns first: a count with all its bogs found makes the rest
+ * dry, and a count that needs every remaining dark neighbour makes them bogs.
+ */
+export function sense(
+  lit: ReadonlyMap<number, number>,
+  sunk: ReadonlySet<number>,
+): {dry: Set<number>; bog: Set<number>} {
+  const dry = new Set<number>()
+  const bog = new Set<number>(sunk)
+  for (let changed = true; changed; ) {
+    changed = false
+    for (const [tile, count] of lit) {
+      const around = neighbors8(tile)
+      const dark = around.filter(n => !lit.has(n) && !dry.has(n) && !bog.has(n))
+      if (dark.length === 0) continue
+      const left = count - around.filter(n => bog.has(n)).length
+      const proven = left === 0 ? dry : left === dark.length ? bog : null
+      if (!proven) continue
+      for (const n of dark) proven.add(n)
+      changed = true
+    }
+  }
+  for (const t of sunk) bog.delete(t)
+  return {dry, bog}
 }

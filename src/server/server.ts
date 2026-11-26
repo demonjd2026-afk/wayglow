@@ -22,6 +22,7 @@ import {
   HttpError,
   leg,
   peek,
+  relight,
   tonight,
   type Who,
   wearFlair,
@@ -90,6 +91,9 @@ async function route(
       break
     case Endpoint.Board:
       rsp = await board()
+      break
+    case Endpoint.Relight:
+      rsp = await relight(needWho())
       break
     case Endpoint.Flair:
       rsp = await wearFlair(needWho())

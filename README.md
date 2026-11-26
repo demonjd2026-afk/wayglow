@@ -16,11 +16,26 @@ Wayglow is a daily game for Reddit, built on Devvit Web as an interactive post. 
 
 One ranked walk per night. A new valley opens at 00:00 UTC.
 
+- **Lantern sense.** When you plan a step into the dark, the game tells you what the visible numbers already prove: a tick means the step is certainly dry, a question mark means it is a gamble, and it will not let you step onto a tile the numbers prove is a bog. It uses only the simplest rule, so deeper deductions are still yours to find.
+- **Walking on.** If all your lanterns sink, your score for the night is fixed, but you can relight a lantern up to three times and keep going. What you light and mark still helps your expedition, and you can still reach the flame.
+
 Other controls:
 
 - **Mark a bog you suspect.** Press and hold a dark tile, or right-click it. Routes will not cross a mark. Marks are private.
 - **Keyboard.** Arrow keys plan, Shift with an arrow marks, Enter walks, Escape clears.
 - **Sound.** Synthesised in the browser; the button in the header turns it off.
+
+### Seven kinds of night
+
+| Night (UTC) | Name          | What changes                                  |
+| ----------- | ------------- | --------------------------------------------- |
+| Sunday      | Long dark     | A plain night: three lanterns, three sparks   |
+| Monday      | Gentle night  | Fewer bogs, four sparks                       |
+| Tuesday     | Firefly night | Six sparks for every walker                   |
+| Wednesday   | Still night   | A plain night                                 |
+| Thursday    | Thick fog     | One spark each, so walkers lean on each other |
+| Friday      | Marsh night   | More bogs                                     |
+| Saturday    | Deep marsh    | The most bogs, and a fourth lantern           |
 
 ### Scoring
 
@@ -38,6 +53,9 @@ Other controls:
 - **Guides.** When another walker steps on a tile you lit first, you are credited once for that walker. The result card and the next night's welcome show how many walkers your light guided.
 - **Live.** A walker's new lights and sunk lanterns reach the rest of the expedition as they happen, with a short note saying who did it.
 - **The roster.** The header shows the snoovatars of the walkers most recently out in your expedition, and a sunk lantern remembers whose it was.
+- **A shared goal.** The header shows how much of your expedition's valley is lit.
+- **Ranks.** Tiles you light first add up across nights: Spark, Candle, Lantern, Beacon, Lighthouse.
+- **Copy my crossing.** The result card copies a short, spoiler-safe summary with an emoji map of your valley, ready to paste in the comments.
 - **How the night went.** The result card shows how many of tonight's walkers kept three, two, one or no lanterns.
 - **Streaks.** Walk on consecutive nights to build one. A streak of three or more survives one missed night, once a week. From two nights on you can choose to wear it as subreddit flair; nothing is set without your tap.
 

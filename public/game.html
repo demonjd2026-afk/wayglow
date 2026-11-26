@@ -311,6 +311,48 @@
       padding: 11px 20px;
     }
     </style>
+    <style>
+    /* Keep everything in one column the width of a phone, however wide the window. */
+    body {
+      justify-items: center;
+    }
+    header,
+    #sub,
+    footer {
+      width: min(100%, 560px);
+    }
+    #stage {
+      width: 100%;
+    }
+    #card .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    #card .row .btn {
+      flex: 1;
+      padding: 9px 12px;
+      font-size: 13px;
+    }
+    #card-rank {
+      color: var(--wick);
+    }
+    footer .btn[hidden] {
+      display: none;
+    }
+    </style>
+    <style>
+    footer {
+      min-width: 0;
+      overflow: hidden;
+    }
+    #hint {
+      min-width: 0;
+    }
+    footer .btn {
+      flex-shrink: 0;
+    }
+    </style>
   </head>
   <body>
     <canvas id="backdrop" aria-hidden="true"></canvas>
@@ -344,11 +386,20 @@
             role="img"
             aria-label="How tonight's walkers finished"
           ></div>
+          <p id="card-rank"></p>
           <p id="card-streak"></p>
           <ol id="card-board"></ol>
           <button id="flair-btn" class="btn quiet" type="button" hidden>
             Wear my streak as flair
           </button>
+          <div class="row">
+            <button id="share-btn" class="btn quiet" type="button">
+              Copy my crossing
+            </button>
+            <button id="card-relight" class="btn quiet" type="button" hidden>
+              Walk on, unranked
+            </button>
+          </div>
           <button id="card-close" class="btn" type="button">
             See the valley
           </button>
@@ -361,6 +412,10 @@
         Clear
       </button>
       <button id="walk-btn" class="btn" type="button" disabled>Walk</button>
+      <button id="relight-btn" class="btn" type="button" hidden>Relight</button>
+      <button id="result-btn" class="btn quiet" type="button" hidden>
+        Result
+      </button>
     </footer>
     <script src="game.js" type="module"></script>
   </body>
