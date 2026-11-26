@@ -1,5 +1,7 @@
 import type {
   BoardRsp,
+  DeepLegRsp,
+  DeepRsp,
   FlairRsp,
   LegReq,
   LegRsp,
@@ -56,3 +58,9 @@ export const fetchFlair = (): Promise<FlairRsp | Failure> =>
   call<FlairRsp>(Endpoint.Flair, {})
 export const fetchRelight = (): Promise<TonightRsp | Failure> =>
   call<TonightRsp>(Endpoint.Relight, {})
+export const fetchDeep = (): Promise<DeepRsp | Failure> =>
+  call<DeepRsp>(Endpoint.Deep)
+export const fetchDeepStart = (): Promise<DeepRsp | Failure> =>
+  call<DeepRsp>(Endpoint.DeepStart, {})
+export const fetchDeepLeg = (req: LegReq): Promise<DeepLegRsp | Failure> =>
+  call<DeepLegRsp>(Endpoint.DeepLeg, req)

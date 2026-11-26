@@ -7,6 +7,7 @@ import {Endpoint} from '../shared/api.ts'
 import {BEACON, CAMP, generate, neighbors4, TILES} from '../shared/engine.ts'
 import {resetFakeRedis, sent, strings} from '../test/fake-redis.ts'
 import {dayOf} from './clock.ts'
+import {deep, deepLeg, deepStart, forgetLevels} from './deep.ts'
 import {
   board,
   claimDailyPost,
@@ -27,6 +28,7 @@ const ana = {id: 't2_ana', name: 'ana'}
 beforeEach(() => {
   resetFakeRedis()
   forgetSecret()
+  forgetLevels()
 })
 
 /** Rebuild the hidden valley the way the server does, to steer test walkers. */
@@ -345,6 +347,77 @@ test('each night has a name, and a crossing builds the almanac', async () => {
   assert.deepEqual(
     [sat.nightName, sat.me.lanterns, sat.lanternsMax],
     ['Deep marsh', 4, 4],
+  )
+})
+
+/** The hidden valley at a depth of The Deep, rebuilt the way the server does. */
+async function deepHidden(depth: number): Promise<ReturnType<typeof generate>> {
+  const {createHmac} = await import('node:crypto')
+  const {deepDensity} = await import('../shared/engine.ts')
+  const day = dayOf(NOW)
+  const seed = createHmac('sha256', strings.get('secret') as string)
+    .update(`deep:${day.key}:${depth}`)
+    .digest()
+    .readUInt32LE(0)
+  return generate(seed, day.weekday, deepDensity(depth))
+}
+
+test('the deep opens after the nightly walk and chains harder valleys', async () => {
+  await tonight(ana, NOW)
+  await assert.rejects(deepStart(ana, NOW), (e: HttpError) => e.status === 409)
+  await assert.rejects(deep(ana, NOW), (e: HttpError) => e.status === 404)
+  await leg(ana, {leg: 1, path: safeRoute((await hidden()).bogs)}, NOW)
+
+  let run = await deepStart(ana, NOW)
+  assert.deepEqual([run.deep.depth, run.me.lanterns, run.me.pos], [1, 3, CAMP])
+  let legNo = 1
+  for (let depth = 1; depth <= 3; depth++) {
+    const v = await deepHidden(depth)
+    for (const [tile] of run.lit) assert.equal(v.bogs[tile], false)
+    const rsp = await deepLeg(ana, {leg: legNo++, path: safeRoute(v.bogs)}, NOW)
+    assert.equal(rsp.descended, true)
+    assert.equal(rsp.spare, depth === 3)
+    assert.deepEqual(
+      [rsp.deep.depth, rsp.deep.best, rsp.me.pos],
+      [depth + 1, depth, CAMP],
+    )
+    assert.deepEqual(rsp.sunk, [])
+    run = rsp
+  }
+  assert.equal(run.me.lanterns, 4)
+  assert.deepEqual((await deep(ana, NOW)).deep.top, [{name: 'ana', score: 3}])
+  // The ranked night is untouched.
+  assert.equal((await board(NOW)).top.length, 1)
+})
+
+test('a deep run ends when the lanterns do, and a new run starts clean', async () => {
+  await tonight(ana, NOW)
+  await leg(ana, {leg: 1, path: safeRoute((await hidden()).bogs)}, NOW)
+  await deepStart(ana, NOW)
+  const v = await deepHidden(1)
+  const route = safeRoute(v.bogs)
+  let pos = CAMP
+  let legNo = 1
+  let bog = neighbors4(pos).find(n => v.bogs[n])
+  while (bog === undefined) {
+    pos = (
+      await deepLeg(ana, {leg: legNo++, path: [route.shift() as number]}, NOW)
+    ).me.pos
+    bog = neighbors4(pos).find(n => v.bogs[n])
+  }
+  let last = await deepLeg(ana, {leg: legNo++, path: [bog]}, NOW)
+  assert.deepEqual(last.sunk, [bog])
+  while (last.me.status === 'walking')
+    last = await deepLeg(ana, {leg: legNo++, path: [bog]}, NOW)
+  assert.deepEqual([last.me.lanterns, last.deep.crossed], [0, 0])
+  assert.equal(
+    (await deepLeg(ana, {leg: legNo, path: [bog]}, NOW)).applied,
+    false,
+  )
+  const again = await deepStart(ana, NOW)
+  assert.deepEqual(
+    [again.deep.depth, again.me.lanterns, again.sunk.length],
+    [1, 3, 0],
   )
 })
 

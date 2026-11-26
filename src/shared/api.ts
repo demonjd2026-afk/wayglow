@@ -82,6 +82,32 @@ export type LegRsp = TonightRsp & {
   applied: boolean
 }
 
+/**
+ * The Deep: a private chain of valleys played after the nightly walk. It has
+ * the same shape as a night so the same board can draw it.
+ */
+export type DeepRsp = TonightRsp & {
+  deep: {
+    /** The valley the walker is in now, counting from 1. */
+    depth: number
+    /** Valleys crossed in this run. */
+    crossed: number
+    /** Most valleys crossed in one run tonight. */
+    best: number
+    top: {name: string; score: number}[]
+  }
+}
+
+export type DeepLegRsp = DeepRsp & {
+  walk: number[]
+  sunkAt: number | null
+  applied: boolean
+  /** True when this stretch reached the flame and the next valley has opened. */
+  descended: boolean
+  /** True when crossing earned a spare lantern. */
+  spare: boolean
+}
+
 /** Pushed to everyone in the expedition when a walker finishes a stretch. */
 export type LiveMsg = {by: string; lit: number; sunk: boolean; arrived: boolean}
 
@@ -107,6 +133,9 @@ export const Endpoint = {
   Board: 'api/board',
   Flair: 'api/flair',
   Relight: 'api/relight',
+  Deep: 'api/deep',
+  DeepStart: 'api/deep/start',
+  DeepLeg: 'api/deep/leg',
   OnAppInstall: 'internal/on/app/install',
   OnMenuNewPost: 'internal/on/menu/new-post',
   OnDailyPost: 'internal/cron/daily-post',
@@ -119,6 +148,9 @@ export const EndpointMethod = {
   [Endpoint.Board]: 'GET',
   [Endpoint.Flair]: 'POST',
   [Endpoint.Relight]: 'POST',
+  [Endpoint.Deep]: 'GET',
+  [Endpoint.DeepStart]: 'POST',
+  [Endpoint.DeepLeg]: 'POST',
   [Endpoint.OnAppInstall]: 'POST',
   [Endpoint.OnMenuNewPost]: 'POST',
   [Endpoint.OnDailyPost]: 'POST',

@@ -53,6 +53,7 @@ r.zAdd = async (key: string, ...rows: {member: string; score: number}[]) => {
   for (const row of rows) z.set(row.member, row.score)
   return rows.length
 }
+r.zScore = async (key: string, member: string) => zsets.get(key)?.get(member)
 r.zRange = async (key: string, start: number, stop: number) =>
   [...(zsets.get(key) ?? new Map<string, number>())]
     .map(([member, score]) => ({member, score}))

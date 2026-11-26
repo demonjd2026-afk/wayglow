@@ -654,3 +654,14 @@ export async function claimDailyPost(
   })
   return Boolean(won)
 }
+
+/** Shared with The Deep, which lives in its own module. */
+export const internals = {
+  seedOf,
+  rateLimit,
+  almanacOf,
+  LOCK_MS,
+  TTL_S,
+  userKey: k.user,
+  lifeKey: k.life,
+}

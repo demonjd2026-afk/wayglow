@@ -353,6 +353,68 @@
       flex-shrink: 0;
     }
     </style>
+    <style>
+    #sub {
+      justify-content: flex-start;
+    }
+    #leave-btn {
+      margin-left: auto;
+    }
+    footer.done #hint {
+      display: none;
+    }
+    footer.done {
+      justify-content: center;
+    }
+    footer.done .btn {
+      flex: 0 1 auto;
+      padding: 12px 18px;
+      font-size: 15px;
+    }
+    #deep-card {
+      position: absolute;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 10px;
+      background: rgba(5, 8, 20, 0.45);
+    }
+    #deep-card.show {
+      display: grid;
+    }
+    #deep-card section {
+      width: min(350px, 100%);
+      padding: 20px 18px 16px;
+      border-radius: 22px;
+      display: grid;
+      gap: 10px;
+    }
+    #deep-card h2 {
+      margin: 0;
+      font: 560 24px / 1.1 var(--display);
+      color: var(--wick);
+      text-shadow: 0 0 20px rgba(255, 181, 71, 0.5);
+    }
+    #deep-card p,
+    #deep-card ol {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.4;
+      color: #d9d2c2;
+    }
+    #deep-card ol {
+      padding-left: 22px;
+    }
+    #deep-card ol:empty {
+      display: none;
+    }
+    </style>
+    <style>
+    #toast {
+      top: auto;
+      bottom: 10px;
+    }
+    </style>
   </head>
   <body>
     <canvas id="backdrop" aria-hidden="true"></canvas>
@@ -365,7 +427,12 @@
         ><i></i><i></i><i></i></span
       >
     </header>
-    <div id="sub"><span id="faces"></span><span id="where"></span></div>
+    <div id="sub">
+      <span id="faces"></span><span id="where"></span
+      ><button id="leave-btn" class="chip" type="button" hidden>
+        Back to tonight
+      </button>
+    </div>
     <div id="stage">
       <canvas id="valley" aria-label="Tonight's valley" tabindex="0"></canvas>
       <div id="loader"><div class="orb"></div></div>
@@ -394,14 +461,31 @@
           </button>
           <div class="row">
             <button id="share-btn" class="btn quiet" type="button">
-              Copy my crossing
+              Copy result
             </button>
             <button id="card-relight" class="btn quiet" type="button" hidden>
-              Walk on, unranked
+              Walk on
+            </button>
+            <button id="card-close" class="btn quiet" type="button">
+              See valley
             </button>
           </div>
-          <button id="card-close" class="btn" type="button">
-            See the valley
+          <button id="card-deep" class="btn" type="button">Go deeper</button>
+        </section>
+      </div>
+      <div
+        id="deep-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deep-title"
+      >
+        <section class="glass beam">
+          <h2 id="deep-title">The Deep</h2>
+          <p id="deep-sub"></p>
+          <ol id="deep-board"></ol>
+          <button id="deep-again" class="btn" type="button">Go again</button>
+          <button id="deep-back" class="btn quiet" type="button">
+            Back to tonight's valley
           </button>
         </section>
       </div>
@@ -413,6 +497,8 @@
       </button>
       <button id="walk-btn" class="btn" type="button" disabled>Walk</button>
       <button id="relight-btn" class="btn" type="button" hidden>Relight</button>
+      <button id="deep-btn" class="btn" type="button" hidden>Go deeper</button>
+      <button id="again-btn" class="btn" type="button" hidden>Go again</button>
       <button id="result-btn" class="btn quiet" type="button" hidden>
         Result
       </button>

@@ -1,6 +1,6 @@
 import {spring, stagger} from 'motion'
 import {animate} from 'motion/mini'
-import type {LegRsp, TonightRsp} from '../shared/api.ts'
+import type {DeepLegRsp, DeepRsp, LegRsp, TonightRsp} from '../shared/api.ts'
 import {
   adjacent4,
   BEACON,
@@ -17,6 +17,9 @@ import {backdrop} from './backdrop.ts'
 import {
   failed,
   fetchBoard,
+  fetchDeep,
+  fetchDeepLeg,
+  fetchDeepStart,
   fetchFlair,
   fetchLeg,
   fetchRelight,
@@ -42,6 +45,11 @@ const facesEl = $('faces')
 const soundBtn = $<HTMLButtonElement>('sound-btn')
 const resultBtn = $<HTMLButtonElement>('result-btn')
 const relightBtn = $<HTMLButtonElement>('relight-btn')
+const deepBtn = $<HTMLButtonElement>('deep-btn')
+const againBtn = $<HTMLButtonElement>('again-btn')
+const leaveBtn = $<HTMLButtonElement>('leave-btn')
+const deepCard = $('deep-card')
+const footer = document.querySelector('footer') as HTMLElement
 const fog = backdrop($<HTMLCanvasElement>('backdrop'), calm)
 
 const STEP_MS = calm ? 40 : 150
@@ -77,6 +85,9 @@ let proof: {dry: Set<number>; bog: Set<number>} = {
   bog: new Set(),
 }
 let touched = false
+/** The nightly valley, or The Deep that opens after it. */
+let mode: 'night' | 'deep' = 'night'
+let deepInfo: DeepRsp['deep'] | undefined
 let introAt = Number.POSITIVE_INFINITY
 let walker = {x: xOf(CAMP), y: yOf(CAMP)}
 let ripple: {tile: number; at: number} | undefined
@@ -229,7 +240,10 @@ function adopt(next: TonightRsp, bornAt?: (tile: number) => number): void {
   proof = sense(lit, sunk)
   const out =
     next.walkers === 1 ? 'You are first out' : `${next.walkers} walkers out`
-  where.textContent = `${next.nightName}. ${out}, valley ${next.glow}% lit`
+  where.textContent =
+    mode === 'deep'
+      ? `${next.nightName}. Best tonight: ${deepInfo?.best ?? 0}`
+      : `${next.nightName}. ${out}, valley ${next.glow}% lit`
   where.title = next.nightBlurb
   while (lanternsEl.childElementCount < next.lanternsMax)
     lanternsEl.append(document.createElement('i'))
@@ -269,7 +283,7 @@ function tileAt(ev: PointerEvent): number {
 }
 
 function flagKey(): string {
-  return `wayglow.flags.${data?.day}.${data?.expedition}`
+  return `wayglow.flags.${data?.day}.${mode}.${mode === 'deep' ? deepInfo?.depth : data?.expedition}`
 }
 
 function loadFlags(): void {
@@ -353,8 +367,13 @@ function refreshControls(): void {
   const over = me !== undefined && me.status !== 'walking'
   walkBtn.hidden = over
   undoBtn.hidden = over
-  resultBtn.hidden = !over
-  relightBtn.hidden = !(me?.status === 'lost' && me.relights > 0)
+  const deepRun = mode === 'deep'
+  resultBtn.hidden = !over || deepRun
+  deepBtn.hidden = deepRun || !over || !data?.result
+  againBtn.hidden = !(deepRun && over)
+  leaveBtn.hidden = !deepRun
+  footer.classList.toggle('done', over)
+  relightBtn.hidden = deepRun || !(me?.status === 'lost' && me.relights > 0)
   if (me) relightBtn.textContent = `Relight (${me.relights} left)`
   walkBtn.disabled = !canPlan() || path.length === 0
   undoBtn.disabled = !canPlan() || path.length === 0
@@ -374,11 +393,13 @@ function refreshControls(): void {
   const gambles = dark.filter(t => !proof.dry.has(t)).length
   if (path.length === 0) {
     hint.textContent =
-      me.legs === 0
+      me.legs === 0 && !(deepRun && (deepInfo?.depth ?? 1) > 1)
         ? `${data?.nightBlurb ?? ''} Drag from your lantern toward the flame. Each number counts the bogs touching that tile.`
-        : me.unranked
-          ? 'Walking on, unranked. Drag from your lantern to plan the next stretch.'
-          : 'Drag from your lantern to plan the next stretch.'
+        : deepRun
+          ? 'Reach the flame to drop into the next valley.'
+          : me.unranked
+            ? 'Walking on, unranked. Drag from your lantern to plan the next stretch.'
+            : 'Drag from your lantern to plan the next stretch.'
   } else if (gambles > 0) {
     hint.textContent = `${gambles} ${gambles === 1 ? 'step is a gamble' : 'steps are gambles'}. A bog there costs a lantern.`
   } else if (dark.length > 0) {
@@ -773,8 +794,10 @@ async function walk(): Promise<void> {
   busy = true
   refreshControls()
   hint.textContent = 'Walking'
-  if (data.me.legs === 0) journey.start()
-  const rsp = await fetchLeg({leg: data.me.legs + 1, path})
+  const deepRun = mode === 'deep'
+  if (!deepRun && data.me.legs === 0) journey.start()
+  const req = {leg: data.me.legs + 1, path}
+  const rsp = deepRun ? await fetchDeepLeg(req) : await fetchLeg(req)
   if (failed(rsp)) {
     busy = false
     hint.textContent =
@@ -785,6 +808,10 @@ async function walk(): Promise<void> {
     return
   }
   path = []
+  if (deepRun) {
+    await afterDeepLeg(rsp as DeepLegRsp)
+    return
+  }
   await play(rsp)
   busy = false
   refreshControls()
@@ -804,6 +831,120 @@ async function walk(): Promise<void> {
       journey.end(rsp.me.status === 'arrived', rsp.result?.total ?? 0)
     void showCard(rsp)
   }
+}
+
+function resetBoard(): void {
+  data = undefined
+  lit = new Map()
+  sunk = new Set()
+  sunkBy = new Map()
+  flags = new Set()
+  born.clear()
+  path = []
+}
+
+/** Lay out a freshly loaded valley: the board rises, then lit tiles turn over from the camp. */
+function unveil(next: TonightRsp): void {
+  resetBoard()
+  introAt = performance.now()
+  adopt(next, tile => {
+    const ring = Math.max(
+      Math.abs(xOf(tile) - xOf(CAMP)),
+      Math.abs(yOf(tile) - yOf(CAMP)),
+    )
+    return introAt + (calm ? 0 : 520 + ring * 55)
+  })
+  walker = {x: xOf(next.me.pos), y: yOf(next.me.pos)}
+  loadFlags()
+  refreshControls()
+}
+
+async function afterDeepLeg(rsp: DeepLegRsp): Promise<void> {
+  deepInfo = rsp.deep
+  if (rsp.descended) {
+    // Finish the walk on the valley just crossed, then drop into the next.
+    rsp.walk.forEach((_, i) => {
+      sfx.step(i, (i * STEP_MS) / 1000)
+    })
+    for (const t of rsp.walk) await glide(xOf(t), yOf(t), STEP_MS)
+    sfx.arrive()
+    burst(BEACON, 70, performance.now())
+    navigator.vibrate?.([20, 40, 20])
+    await new Promise(resolve => setTimeout(resolve, calm ? 200 : 800))
+    journey.act('deep_valley')
+    unveil(rsp)
+    toast(
+      toastEl,
+      rsp.spare
+        ? `Valley ${rsp.deep.crossed} crossed. A spare lantern for making it this far.`
+        : `Valley ${rsp.deep.crossed} crossed. Deeper.`,
+      3200,
+    )
+  } else {
+    await play(rsp)
+  }
+  busy = false
+  refreshControls()
+  if (rsp.me.status === 'lost') showDeepCard(rsp)
+}
+
+function showDeepCard(d: DeepRsp): void {
+  const n = d.deep.crossed
+  $('deep-title').textContent =
+    n === 0
+      ? 'The dark closed in'
+      : `You crossed ${n} ${n === 1 ? 'valley' : 'valleys'}`
+  $('deep-sub').textContent =
+    d.deep.best > 0
+      ? `Your deepest run tonight: ${d.deep.best}. Only your best counts, so go again whenever you like.`
+      : 'Cross one valley to get on the board. Go again whenever you like.'
+  const ol = $('deep-board')
+  ol.replaceChildren()
+  for (const entry of d.deep.top) {
+    const li = document.createElement('li')
+    li.textContent = `${entry.name}, ${entry.score} ${entry.score === 1 ? 'valley' : 'valleys'}`
+    ol.append(li)
+  }
+  deepCard.classList.add('show')
+  if (!calm) animate(deepCard, {opacity: [0, 1]}, {duration: 0.3})
+  $<HTMLButtonElement>('deep-again').focus()
+}
+
+/** Enter The Deep: resume a run in progress, or start a fresh one. */
+async function enterDeep(fresh: boolean): Promise<void> {
+  if (busy) return
+  busy = true
+  let rsp = fresh ? await fetchDeepStart() : await fetchDeep()
+  if (!fresh && (failed(rsp) || rsp.me.status === 'lost'))
+    rsp = await fetchDeepStart()
+  busy = false
+  if (failed(rsp)) {
+    hint.textContent = 'The Deep could not be reached. Try again.'
+    return
+  }
+  card.classList.remove('show')
+  deepCard.classList.remove('show')
+  mode = 'deep'
+  deepInfo = rsp.deep
+  journey.act('deep_start')
+  unveil(rsp)
+  toast(
+    toastEl,
+    'The Deep. Reach the flame to drop into the next valley.',
+    3600,
+  )
+}
+
+async function backToNight(): Promise<void> {
+  if (busy) return
+  busy = true
+  const rsp = await fetchTonight()
+  busy = false
+  if (failed(rsp)) return
+  deepCard.classList.remove('show')
+  mode = 'night'
+  deepInfo = undefined
+  unveil(rsp)
 }
 
 async function play(rsp: LegRsp): Promise<void> {
@@ -951,7 +1092,7 @@ async function showCard(d: TonightRsp): Promise<void> {
       ? `Rank: ${a.rank}. Light ${a.toNext} more ${a.toNext === 1 ? 'tile' : 'tiles'} to become a ${a.nextRank}.`
       : `Rank: ${a.rank}, the highest there is.`
   $('card-relight').hidden = !(d.me.status === 'lost' && d.me.relights > 0)
-  $('share-btn').textContent = 'Copy my crossing'
+  $('share-btn').textContent = 'Copy result'
   const dl = $('card-score')
   dl.replaceChildren()
   row(dl, `Lanterns kept (${r.lanterns / 100})`, r.lanterns)
@@ -1009,7 +1150,7 @@ async function showCard(d: TonightRsp): Promise<void> {
     )
   }
   countUp(total, r.total, 350)
-  $<HTMLButtonElement>('card-close').focus()
+  $<HTMLButtonElement>('card-deep').focus()
   const top = await fetchBoard()
   if (failed(top)) return
   for (const entry of top.top.slice(0, 3)) {
@@ -1020,7 +1161,7 @@ async function showCard(d: TonightRsp): Promise<void> {
 }
 
 async function refresh(): Promise<void> {
-  if (busy || dragging || document.hidden) return
+  if (busy || dragging || document.hidden || mode === 'deep') return
   const next = await fetchTonight()
   if (busy || failed(next)) return
   adopt(next)
@@ -1093,7 +1234,12 @@ async function init(): Promise<void> {
   // Keyboard: arrows plan, Enter walks, Escape clears, F marks the tile ahead.
   addEventListener('keydown', ev => {
     unlock()
-    if (!data || card.classList.contains('show')) return
+    if (
+      !data ||
+      card.classList.contains('show') ||
+      deepCard.classList.contains('show')
+    )
+      return
     const tail = path.at(-1) ?? data.me.pos
     const step = {ArrowUp: -W, ArrowDown: W, ArrowLeft: -1, ArrowRight: 1}[
       ev.key
@@ -1162,15 +1308,28 @@ async function init(): Promise<void> {
     refreshControls()
   }
   relightBtn.addEventListener('click', () => void walkOn())
+  for (const id of ['deep-btn', 'card-deep'])
+    $(id).addEventListener('click', () => void enterDeep(false))
+  for (const id of ['again-btn', 'deep-again'])
+    $(id).addEventListener('click', () => void enterDeep(true))
+  for (const id of ['leave-btn', 'deep-back'])
+    $(id).addEventListener('click', () => void backToNight())
+  for (const id of [
+    'deep-btn',
+    'card-deep',
+    'again-btn',
+    'deep-again',
+    'deep-back',
+  ])
+    springy($(id))
   $('card-relight').addEventListener('click', () => void walkOn())
   $('share-btn').addEventListener('click', ev => {
     if (!data) return
     const btn = ev.currentTarget as HTMLButtonElement
     journey.act('share')
     void copy(shareText(data)).then(ok => {
-      btn.textContent = ok
-        ? 'Copied. Paste it in the comments.'
-        : 'Could not copy on this device'
+      btn.textContent = ok ? 'Copied' : 'Copy failed'
+      if (ok) toast(toastEl, 'Copied. Paste it in the comments.', 3000)
     })
   })
   for (const b of [resultBtn, relightBtn, $('card-relight'), $('share-btn')])

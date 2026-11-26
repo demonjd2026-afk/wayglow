@@ -15,6 +15,7 @@ import {
   type LegReq,
 } from '../shared/api.ts'
 import {dayOf} from './clock.ts'
+import {deep, deepLeg, deepStart} from './deep.ts'
 import {
   board,
   claimDailyPost,
@@ -91,6 +92,15 @@ async function route(
       break
     case Endpoint.Board:
       rsp = await board()
+      break
+    case Endpoint.Deep:
+      rsp = await deep(needWho())
+      break
+    case Endpoint.DeepStart:
+      rsp = await deepStart(needWho())
+      break
+    case Endpoint.DeepLeg:
+      rsp = await deepLeg(needWho(), await readJson<LegReq>(reqMsg))
       break
     case Endpoint.Relight:
       rsp = await relight(needWho())

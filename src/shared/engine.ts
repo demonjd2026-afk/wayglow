@@ -321,6 +321,14 @@ export function score(
   return {lanterns, route, light, total: lanterns + route + light}
 }
 
+/** The Deep: each valley down has more bogs, up to a ceiling that stays crossable. */
+export function deepDensity(depth: number): number {
+  return Math.min(0.3, 0.16 + 0.02 * (Math.max(1, depth) - 1))
+}
+
+/** In The Deep, every third valley crossed earns a spare lantern. */
+export const DEEP_SPARE_EVERY = 3
+
 /**
  * What the visible counts already prove about dark tiles, using the one rule
  * every player learns first: a count with all its bogs found makes the rest

@@ -10,6 +10,8 @@ export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1]
 export function springy(el: HTMLElement): void {
   if (calm) return
   const to = (scale: number): void => {
+    // Hidden buttons still get pointer events on some browsers; there is nothing to animate.
+    if (el.offsetParent === null) return
     animate(
       el,
       {transform: `scale(${scale})`},

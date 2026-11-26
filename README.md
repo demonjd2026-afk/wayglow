@@ -25,6 +25,12 @@ Other controls:
 - **Keyboard.** Arrow keys plan, Shift with an arrow marks, Enter walks, Escape clears.
 - **Sound.** Synthesised in the browser; the button in the header turns it off.
 
+### The Deep
+
+When your nightly walk is over, **Go deeper** opens an endless descent. Each valley you cross drops you into the next, with more bogs every time. Your lanterns carry over, and every third valley crossed earns a spare. The run ends when the last lantern sinks, and you can go again as often as you like; only your deepest run of the night counts on the Deep board.
+
+Every walker gets the same valleys at each depth, so runs can be compared, but in The Deep nobody lights the way for you.
+
 ### Seven kinds of night
 
 | Night (UTC) | Name          | What changes                                  |
@@ -67,6 +73,7 @@ Other controls:
 src/shared/engine.ts   Rules: seeded valley generator, bog counts, lighting, route checks, scoring
 src/shared/api.ts      Request and response types shared by client and server
 src/server/game.ts     Seating, walking, streaks and the board, on Devvit Redis
+src/server/deep.ts     The Deep: private chained valleys and their board
 src/server/server.ts   HTTP routes, menu action, install trigger, daily post job
 src/client/splash.ts   Feed card
 src/client/backdrop.ts Fog and lantern-heat shader
