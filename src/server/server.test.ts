@@ -5,7 +5,7 @@ import {beforeEach, test} from 'node:test'
 import {type Context, runWithContext} from '@devvit/web/server'
 import {Endpoint} from '../shared/api.ts'
 import {BEACON, CAMP, generate, neighbors4, TILES} from '../shared/engine.ts'
-import {resetFakeRedis, strings} from '../test/fake-redis.ts'
+import {resetFakeRedis, sent, strings} from '../test/fake-redis.ts'
 import {dayOf} from './clock.ts'
 import {
   board,
@@ -16,6 +16,7 @@ import {
   leg,
   peek,
   tonight,
+  wearFlair,
 } from './game.ts'
 import {onReq} from './server.ts'
 
@@ -176,6 +177,83 @@ test('streak grows on consecutive nights and resets after a gap', async () => {
     await tonight(ana, t)
     assert.equal((await leg(ana, {leg: 1, path: [CAMP - 7]}, t)).streak, want)
   }
+})
+
+test("following another walker's light credits them once", async () => {
+  const bo = {id: 't2_bo', name: 'bo'}
+  await tonight(ana, NOW)
+  const v = await hidden()
+  const route = safeRoute(v.bogs)
+  const first = await leg(ana, {leg: 1, path: route}, NOW)
+  assert.equal(first.guided, 0)
+  const live = sent.at(-1)?.msg as {by: string; arrived: boolean; sunk: boolean}
+  assert.deepEqual([live.by, live.arrived, live.sunk], ['ana', true, false])
+  await tonight(bo, NOW)
+  const half = Math.floor(route.length / 2)
+  await leg(bo, {leg: 1, path: route.slice(0, half)}, NOW)
+  await leg(bo, {leg: 2, path: route.slice(half)}, NOW)
+  const after = await tonight(ana, NOW)
+  assert.equal(after.guided, 1)
+  assert.deepEqual(after.stats, [0, 0, 0, 2])
+  assert.deepEqual(
+    after.roster.map(w => w.name),
+    ['bo', 'ana'],
+  )
+  assert.equal(after.channel, sent.at(-1)?.channel)
+  assert.match(after.channel, /^[a-zA-Z0-9_]+$/)
+})
+
+test("a sunk lantern carries the walker's name, and the feed card sees the light", async () => {
+  await tonight(ana, NOW)
+  const v = await hidden()
+  let pos = CAMP
+  let legNo = 1
+  for (const step of safeRoute(v.bogs)) {
+    const bog = neighbors4(pos).find(n => v.bogs[n])
+    if (bog !== undefined) {
+      const rsp = await leg(ana, {leg: legNo, path: [bog]}, NOW)
+      assert.deepEqual(rsp.sunkBy, [[bog, 'ana']])
+      break
+    }
+    await leg(ana, {leg: legNo++, path: [step]}, NOW)
+    pos = step
+  }
+  const card = await peek(undefined, NOW)
+  assert.ok(card.litPct > 10 && card.litPct <= 100)
+})
+
+test('a streak of three survives one missed night, once', async () => {
+  const day = 86_400_000
+  const walk = async (
+    offset: number,
+  ): Promise<{streak: number; streakSaved: boolean}> => {
+    const t = NOW + offset * day
+    await tonight(ana, t)
+    return leg(ana, {leg: 1, path: [CAMP - 7]}, t)
+  }
+  for (const offset of [0, 1, 2]) await walk(offset)
+  const spared = await walk(4)
+  assert.equal(spared.streak, 4)
+  assert.equal(spared.streakSaved, true)
+  assert.equal((await walk(6)).streak, 1)
+})
+
+test('last night shows up once, before the first step of a new night', async () => {
+  const day = 86_400_000
+  await tonight(ana, NOW)
+  await leg(ana, {leg: 1, path: [CAMP - 7]}, NOW)
+  const next = await tonight(ana, NOW + day)
+  assert.deepEqual(next.yesterday, {
+    night: next.night - 1,
+    guided: 0,
+    status: 'walking',
+  })
+  const stepped = await leg(ana, {leg: 1, path: [CAMP - 7]}, NOW + day)
+  assert.equal(stepped.yesterday, null)
+})
+
+test('flair is refused without a streak', async () => {
+  await assert.rejects(wearFlair(ana, NOW), (e: HttpError) => e.status === 409)
 })
 
 test('the daily post can only be claimed once', async () => {

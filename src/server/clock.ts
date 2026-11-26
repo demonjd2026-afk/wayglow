@@ -15,6 +15,16 @@ export function dayOf(now: number): Day {
   }
 }
 
+/** The day key `back` days before `now`. */
+export function keyBefore(now: number, back: number): string {
+  return dayOf(now - back * DAY_MS).key
+}
+
 export function previousKey(now: number): string {
-  return dayOf(now - DAY_MS).key
+  return keyBefore(now, 1)
+}
+
+/** Whole days from one day key to another. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS)
 }

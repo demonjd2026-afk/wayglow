@@ -14,8 +14,16 @@ import {
   yOf,
 } from '../shared/engine.ts'
 import {backdrop} from './backdrop.ts'
-import {failed, fetchBoard, fetchLeg, fetchTonight} from './fetch.ts'
+import {
+  failed,
+  fetchBoard,
+  fetchFlair,
+  fetchLeg,
+  fetchTonight,
+} from './fetch.ts'
 import {calm, clamp01, countUp, EASE, easeOutBack, jolt, springy} from './fx.ts'
+import {isMuted, setMuted, sfx, unlock} from './sfx.ts'
+import {describe, journey, listen, showFaces, toast} from './social.ts'
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T
@@ -28,6 +36,9 @@ const lanternsEl = $('lanterns')
 const walkBtn = $<HTMLButtonElement>('walk-btn')
 const undoBtn = $<HTMLButtonElement>('undo-btn')
 const card = $('card')
+const toastEl = $('toast')
+const facesEl = $('faces')
+const soundBtn = $<HTMLButtonElement>('sound-btn')
 const fog = backdrop($<HTMLCanvasElement>('backdrop'), calm)
 
 const STEP_MS = calm ? 40 : 150
@@ -53,6 +64,10 @@ let path: number[] = []
 let busy = false
 let dragging = false
 let hover = -1
+/** Bogs this walker suspects. Private, kept for the night. */
+let flags = new Set<number>()
+let sunkBy = new Map<number, string>()
+let live = false
 let introAt = Number.POSITIVE_INFINITY
 let walker = {x: xOf(CAMP), y: yOf(CAMP)}
 let ripple: {tile: number; at: number} | undefined
@@ -199,6 +214,9 @@ function adopt(next: TonightRsp, bornAt?: (tile: number) => number): void {
   data = next
   lit = new Map(next.lit)
   sunk = new Set(next.sunk)
+  sunkBy = new Map(next.sunkBy)
+  for (const t of flags) if (lit.has(t) || sunk.has(t)) flags.delete(t)
+  showFaces(facesEl, next.roster)
   where.textContent = `Night ${next.night}, ${next.walkers === 1 ? 'you are first out' : `${next.walkers} walkers out`}`
   const pips = lanternsEl.querySelectorAll('i')
   pips.forEach((pip, i) => {
@@ -236,6 +254,40 @@ function tileAt(ev: PointerEvent): number {
   return x < 0 || x >= W || y < 0 || y >= H ? -1 : y * W + x
 }
 
+function flagKey(): string {
+  return `wayglow.flags.${data?.day}.${data?.expedition}`
+}
+
+function loadFlags(): void {
+  try {
+    flags = new Set(
+      (JSON.parse(localStorage.getItem(flagKey()) ?? '[]') as number[]).filter(
+        t => !lit.has(t),
+      ),
+    )
+  } catch {
+    flags = new Set()
+  }
+}
+
+/** Mark or unmark a dark tile as a suspected bog. Routes cannot cross a mark. */
+function toggleFlag(tile: number): void {
+  if (!data || tile < 0 || lit.has(tile) || sunk.has(tile) || tile === BEACON)
+    return
+  if (flags.has(tile)) flags.delete(tile)
+  else flags.add(tile)
+  path = path.includes(tile) ? path.slice(0, path.indexOf(tile)) : path
+  sfx.flag()
+  navigator.vibrate?.(12)
+  journey.act('mark')
+  try {
+    localStorage.setItem(flagKey(), JSON.stringify([...flags]))
+  } catch {
+    // Marks still work for this visit.
+  }
+  refreshControls()
+}
+
 function canPlan(): boolean {
   return !busy && data?.me.status === 'walking'
 }
@@ -246,6 +298,7 @@ function canStep(tile: number): boolean {
     !canPlan() ||
     tile < 0 ||
     sunk.has(tile) ||
+    flags.has(tile) ||
     path.length >= MAX_PATH
   )
     return false
@@ -267,7 +320,10 @@ function plan(tile: number): void {
     if (at >= 0) path = path.slice(0, at + 1)
     else if (canStep(tile)) path.push(tile)
   }
-  if (path.length > before) navigator.vibrate?.(6)
+  if (path.length > before) {
+    navigator.vibrate?.(6)
+    sfx.plan(path.length)
+  }
   refreshControls()
 }
 
@@ -413,6 +469,23 @@ function draw(now: number): void {
       }
       ctx.globalAlpha = 1
     }
+  }
+
+  for (const t of flags) {
+    const [fx, fy] = centre(t)
+    ctx.strokeStyle = '#ff7a6b'
+    ctx.fillStyle = '#ff7a6b'
+    ctx.lineWidth = Math.max(2, size * 0.05)
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(fx - size * 0.1, fy + size * 0.2)
+    ctx.lineTo(fx - size * 0.1, fy - size * 0.22)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(fx - size * 0.1, fy - size * 0.22)
+    ctx.lineTo(fx + size * 0.2, fy - size * 0.1)
+    ctx.lineTo(fx - size * 0.1, fy + size * 0.02)
+    ctx.fill()
   }
 
   if (hover >= 0 && canPlan()) {
@@ -626,6 +699,7 @@ async function walk(): Promise<void> {
   busy = true
   refreshControls()
   hint.textContent = 'Walking'
+  if (data.me.legs === 0) journey.start()
   const rsp = await fetchLeg({leg: data.me.legs + 1, path})
   if (failed(rsp)) {
     busy = false
@@ -640,7 +714,21 @@ async function walk(): Promise<void> {
   await play(rsp)
   busy = false
   refreshControls()
-  if (rsp.me.status !== 'walking') void showCard(rsp)
+  if (rsp.me.status === 'walking') {
+    journey.progress(Math.min(0.95, 1 - yOf(rsp.me.pos) / (H - 1)))
+    if (rsp.streakSaved && rsp.me.legs === 1)
+      toast(toastEl, 'A spare wick kept your streak alive.', 3600)
+    else if (rsp.sunkAt !== null && rsp.me.lanterns === 2) {
+      toast(
+        toastEl,
+        'Press and hold a dark tile to mark a bog you suspect.',
+        4200,
+      )
+    }
+  } else {
+    journey.end(rsp.me.status === 'arrived', rsp.result?.total ?? 0)
+    void showCard(rsp)
+  }
 }
 
 async function play(rsp: LegRsp): Promise<void> {
@@ -662,8 +750,12 @@ async function play(rsp: LegRsp): Promise<void> {
     return start + (best + 0.6) * STEP_MS + bestD * 70
   })
   if (rsp.sunkAt !== null) sunk.delete(rsp.sunkAt)
+  rsp.walk.forEach((_, i) => {
+    sfx.step(i, (i * STEP_MS) / 1000)
+  })
   for (const t of rsp.walk) await glide(xOf(t), yOf(t), STEP_MS)
   if (rsp.me.status === 'arrived') {
+    sfx.arrive()
     burst(BEACON, 70, performance.now())
     navigator.vibrate?.([20, 40, 20])
     await new Promise(resolve => setTimeout(resolve, calm ? 200 : 900))
@@ -677,6 +769,8 @@ async function play(rsp: LegRsp): Promise<void> {
     )
     sunk.add(rsp.sunkAt)
     ripple = {tile: rsp.sunkAt, at: performance.now()}
+    sfx.sink()
+    if (rsp.me.lanterns === 0) sfx.lost()
     navigator.vibrate?.(70)
     jolt(stage, 7)
     await glide(back.x, back.y, STEP_MS * 1.5)
@@ -722,13 +816,33 @@ async function showCard(d: TonightRsp): Promise<void> {
   row(dl, 'Route', r.route)
   row(dl, `First light (${d.me.firstLight} tiles)`, r.light)
   const total = row(dl, `Night ${d.night}`, r.total, 'total')
+  const mins = Math.max(1, Math.round((d.nextAt - Date.now()) / 60_000))
+  const opens = `A new valley opens in ${Math.floor(mins / 60)} h ${mins % 60} min.`
   $('card-streak').textContent =
     d.streak > 1
-      ? `${d.streak} nights in a row.`
-      : 'Come back tomorrow to start a streak.'
-  const mins = Math.max(1, Math.round((d.nextAt - Date.now()) / 60_000))
-  $('card-next').textContent =
-    `A new valley opens in ${Math.floor(mins / 60)} h ${mins % 60} min.`
+      ? `${d.streak} nights in a row. ${opens}`
+      : `${opens} Come back to start a streak.`
+  $('card-guided').textContent =
+    d.guided > 0
+      ? `Your light has guided ${d.guided} ${d.guided === 1 ? 'walker' : 'walkers'} so far tonight.`
+      : 'When another walker uses a tile you lit, you will see it here.'
+  const bars = $('card-stats')
+  bars.replaceChildren()
+  const tally = d.stats ?? [0, 0, 0, 0]
+  const most = Math.max(1, ...tally)
+  const mine = arrived ? d.me.lanterns : 0
+  for (const [i, label] of ['Lost', '1 left', '2 left', '3 left'].entries()) {
+    const col = document.createElement('div')
+    const bar = document.createElement('i')
+    const cap = document.createElement('span')
+    bar.style.height = `${Math.round(5 + (24 * (tally[i] ?? 0)) / most)}px`
+    if (i === mine) col.className = 'mine'
+    cap.textContent = `${label} (${tally[i] ?? 0})`
+    col.append(bar, cap)
+    bars.append(col)
+  }
+  const flairBtn = $<HTMLButtonElement>('flair-btn')
+  flairBtn.hidden = d.streak < 2
   const ol = $('card-board')
   ol.replaceChildren()
   card.classList.add('show')
@@ -750,7 +864,7 @@ async function showCard(d: TonightRsp): Promise<void> {
   $<HTMLButtonElement>('card-close').focus()
   const top = await fetchBoard()
   if (failed(top)) return
-  for (const entry of top.top.slice(0, 5)) {
+  for (const entry of top.top.slice(0, 3)) {
     const li = document.createElement('li')
     li.textContent = `${entry.name}, ${entry.score}`
     ol.append(li)
@@ -786,15 +900,36 @@ async function init(): Promise<void> {
       {duration: 0.6, delay: 0.15, ease: EASE},
     )
   }
+  let hold: ReturnType<typeof setTimeout> | undefined
+  let heldTile = -1
   canvas.addEventListener('pointerdown', ev => {
+    unlock()
+    if (ev.button === 2) return
     dragging = true
     canvas.setPointerCapture(ev.pointerId)
-    plan(tileAt(ev))
+    const tile = tileAt(ev)
+    heldTile = tile
+    const name = sunkBy.get(tile)
+    if (name)
+      hint.textContent = `${name}'s lantern sank here. Thanks to them, everyone knows.`
+    // Press and hold marks a suspected bog instead of planning through it.
+    clearTimeout(hold)
+    hold = setTimeout(() => {
+      if (heldTile !== tile) return
+      dragging = false
+      toggleFlag(tile)
+    }, 430)
+    plan(tile)
+  })
+  canvas.addEventListener('contextmenu', ev => {
+    ev.preventDefault()
+    toggleFlag(tileAt(ev as PointerEvent))
   })
   canvas.addEventListener('pointermove', ev => {
     hover = ev.pointerType === 'mouse' ? tileAt(ev) : -1
     tilt.x = (ev.clientX / innerWidth - 0.5) * 2
     tilt.y = (ev.clientY / innerHeight - 0.5) * 2
+    if (tileAt(ev) !== heldTile) heldTile = -1
     if (dragging) plan(tileAt(ev))
   })
   canvas.addEventListener('pointerleave', () => {
@@ -802,9 +937,57 @@ async function init(): Promise<void> {
   })
   const stop = (): void => {
     dragging = false
+    heldTile = -1
+    clearTimeout(hold)
   }
   canvas.addEventListener('pointerup', stop)
   canvas.addEventListener('pointercancel', stop)
+  // Keyboard: arrows plan, Enter walks, Escape clears, F marks the tile ahead.
+  addEventListener('keydown', ev => {
+    unlock()
+    if (!data || card.classList.contains('show')) return
+    const tail = path.at(-1) ?? data.me.pos
+    const step = {ArrowUp: -W, ArrowDown: W, ArrowLeft: -1, ArrowRight: 1}[
+      ev.key
+    ]
+    if (step !== undefined) {
+      ev.preventDefault()
+      const to = tail + step
+      const wraps = Math.abs(step) === 1 && yOf(to) !== yOf(tail)
+      if (to < 0 || to >= W * H || wraps) return
+      if (ev.shiftKey) toggleFlag(to)
+      else if (to === (path.at(-2) ?? data.me.pos))
+        plan(path.length > 1 ? to : data.me.pos)
+      else plan(to)
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault()
+      void walk()
+    } else if (ev.key === 'Escape' || ev.key === 'Backspace') {
+      path = []
+      refreshControls()
+    }
+  })
+  const paintSound = (): void => {
+    soundBtn.setAttribute('aria-pressed', `${!isMuted()}`)
+    soundBtn.textContent = isMuted() ? 'Sound off' : 'Sound on'
+  }
+  paintSound()
+  soundBtn.addEventListener('click', () => {
+    setMuted(!isMuted())
+    unlock()
+    paintSound()
+    sfx.plan(2)
+  })
+  $('flair-btn').addEventListener('click', ev => {
+    const btn = ev.currentTarget as HTMLButtonElement
+    btn.disabled = true
+    journey.act('flair')
+    void fetchFlair().then(rsp => {
+      btn.textContent = failed(rsp)
+        ? 'Flair could not be set here'
+        : `Flair set: ${rsp.text}`
+    })
+  })
   walkBtn.addEventListener('click', () => void walk())
   undoBtn.addEventListener('click', () => {
     path = []
@@ -834,10 +1017,31 @@ async function init(): Promise<void> {
     return introAt + (calm ? 0 : 520 + ring * 55)
   })
   walker = {x: xOf(first.me.pos), y: yOf(first.me.pos)}
+  loadFlags()
   refreshControls()
+  journey.ready()
+  if (first.yesterday && first.yesterday.guided > 0) {
+    const g = first.yesterday.guided
+    setTimeout(
+      () =>
+        toast(
+          toastEl,
+          `Last night your light guided ${g} ${g === 1 ? 'walker' : 'walkers'}.`,
+          4200,
+        ),
+      1800,
+    )
+  }
+  // Live pushes make other walkers' lights appear at once; polling stays as the safety net.
+  let pending: ReturnType<typeof setTimeout> | undefined
+  live = listen(first.channel, msg => {
+    if (msg.by !== undefined) toast(toastEl, describe(msg))
+    clearTimeout(pending)
+    pending = setTimeout(() => void refresh(), 350)
+  })
   if (first.me.status !== 'walking')
     setTimeout(() => void showCard(first), calm ? 0 : 1500)
-  setInterval(() => void refresh(), 10_000)
+  setInterval(() => void refresh(), live ? 30_000 : 10_000)
 }
 
 void init()

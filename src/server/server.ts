@@ -1,11 +1,13 @@
 import {once} from 'node:events'
 import type {IncomingMessage, ServerResponse} from 'node:http'
+import {telemetryRouter} from '@devvit/analytics/server/reddit'
 import {context, reddit} from '@devvit/web/server'
 import type {
   PartialJsonValue,
   TriggerResponse,
   UiResponse,
 } from '@devvit/web/shared'
+import express from 'express'
 import {
   Endpoint,
   EndpointMethod,
@@ -22,9 +24,13 @@ import {
   peek,
   tonight,
   type Who,
+  wearFlair,
 } from './game.ts'
 
 const MAX_BODY = 4096
+
+/** Devvit Journeys: Reddit's own router answers the client's /api/telemetry calls. */
+const telemetryApp = express().use(telemetryRouter)
 
 export async function onReq(
   reqMsg: IncomingMessage,
@@ -63,6 +69,10 @@ async function route(
   reqMsg: IncomingMessage,
   rspMsg: ServerResponse,
 ): Promise<void> {
+  if ((reqMsg.url ?? '').startsWith('/api/telemetry/')) {
+    telemetryApp(reqMsg, rspMsg)
+    return
+  }
   const endpoint = (reqMsg.url ?? '').split('?')[0]?.slice(1) as Endpoint
   const method = EndpointMethod[endpoint]
   if (!method || method !== reqMsg.method) throw new HttpError(404, 'not found')
@@ -80,6 +90,9 @@ async function route(
       break
     case Endpoint.Board:
       rsp = await board()
+      break
+    case Endpoint.Flair:
+      rsp = await wearFlair(needWho())
       break
     case Endpoint.OnMenuNewPost:
       rsp = await routeMenuNewPost()

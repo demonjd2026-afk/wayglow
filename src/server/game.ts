@@ -1,12 +1,15 @@
 import {createHmac, randomBytes} from 'node:crypto'
-import {redis} from '@devvit/web/server'
+import {context, realtime, reddit, redis} from '@devvit/web/server'
 import type {
   BoardRsp,
+  FlairRsp,
   LegReq,
   LegRsp,
+  LiveMsg,
   Me,
   PeekRsp,
   TonightRsp,
+  Walker,
   WalkStatus,
 } from '../shared/api.ts'
 import {
@@ -19,10 +22,11 @@ import {
   score,
   simulate,
   sparks,
+  TILES,
   type Valley,
   validatePath,
 } from '../shared/engine.ts'
-import {type Day, dayOf, previousKey} from './clock.ts'
+import {type Day, dayOf, daysBetween, keyBefore, previousKey} from './clock.ts'
 
 /** Walkers per expedition. Fixed, so no key grows with the size of the crowd. */
 export const EXPEDITION_SIZE = 40
@@ -42,6 +46,40 @@ export class HttpError extends Error {
 
 export type Who = {id: string; name: string}
 
+/** Reddit-side extras must never break a walk; log and carry on. */
+async function soft<T>(
+  what: string,
+  run: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await run()
+  } catch (err) {
+    console.warn(`${what} skipped; ${err instanceof Error ? err.message : err}`)
+    return undefined
+  }
+}
+
+function channelOf(day: Day, exp: number): string {
+  return `valley_${day.key.replaceAll('-', '')}_${exp}`
+}
+
+/** Stay well under the platform's realtime message budget. */
+const LIVE_PER_SECOND = 60
+
+async function announce(
+  day: Day,
+  exp: number,
+  msg: LiveMsg,
+  now: number,
+): Promise<void> {
+  await soft('live update', async () => {
+    const key = k.live(Math.floor(now / 1000))
+    const n = await redis.incrBy(key, 1)
+    if (n === 1) await redis.expire(key, 5)
+    if (n <= LIVE_PER_SECOND) await realtime.send(channelOf(day, exp), msg)
+  })
+}
+
 const k = {
   secret: 'secret',
   seq: (day: string) => `seq:${day}`,
@@ -54,6 +92,10 @@ const k = {
   streak: (uid: string) => `s:${uid}`,
   rate: (uid: string, minute: number) => `rl:${uid}:${minute}`,
   posted: (day: string) => `posted:${day}`,
+  guide: (day: string) => `g:${day}`,
+  stats: (day: string) => `st:${day}`,
+  roster: (day: string, exp: number) => `x:${day}:${exp}:who`,
+  live: (second: number) => `rt:${second}`,
 }
 
 let secretCache: string | undefined
@@ -164,16 +206,33 @@ async function seat(day: Day, who: Who): Promise<Record<string, string>> {
   }
   await redis.hSet(ukey, u)
   const metaKey = k.meta(day.key, exp)
-  await redis.hIncrBy(metaKey, 'walkers', 1)
-  await expire(ukey, litKey, metaKey, k.seq(day.key))
+  const joined = await redis.hIncrBy(metaKey, 'walkers', 1)
+  const avatar =
+    (await soft('snoovatar', () => reddit.getSnoovatarUrl(who.name))) ?? null
+  const rosterKey = k.roster(day.key, exp)
+  await redis.hSet(rosterKey, {
+    [who.id]: JSON.stringify({n: who.name, a: avatar, i: joined}),
+  })
+  await expire(ukey, litKey, metaKey, rosterKey, k.seq(day.key))
   return u
 }
 
-async function streakOf(uid: string, now: number): Promise<number> {
+/** A streak of three or more survives one missed night, once a week. */
+function spareWick(s: Record<string, string>, now: number): boolean {
+  const today = dayOf(now).key
+  const rested = !s.saved || daysBetween(s.saved, today) >= 7
+  return s.last === keyBefore(now, 2) && Number(s.n ?? 0) >= 3 && rested
+}
+
+async function streakOf(
+  uid: string,
+  now: number,
+): Promise<{n: number; saved: boolean}> {
   const s = await redis.hGetAll(k.streak(uid))
   const today = dayOf(now).key
-  if (s.last === today || s.last === previousKey(now)) return Number(s.n ?? 0)
-  return 0
+  const alive =
+    s.last === today || s.last === previousKey(now) || spareWick(s, now)
+  return {n: alive ? Number(s.n ?? 0) : 0, saved: s.saved === today}
 }
 
 async function bumpStreak(uid: string, now: number): Promise<void> {
@@ -181,9 +240,29 @@ async function bumpStreak(uid: string, now: number): Promise<void> {
   const s = await redis.hGetAll(key)
   const today = dayOf(now).key
   if (s.last === today) return
-  const n = s.last === previousKey(now) ? Number(s.n ?? 0) + 1 : 1
-  await redis.hSet(key, {last: today, n: `${n}`})
+  const spared = spareWick(s, now)
+  const n = s.last === previousKey(now) || spared ? Number(s.n ?? 0) + 1 : 1
+  await redis.hSet(key, {
+    last: today,
+    n: `${n}`,
+    ...(spared ? {saved: today} : {}),
+  })
   await redis.expire(key, TTL_S)
+}
+
+function rosterOf(
+  hash: Record<string, string>,
+): Map<string, Walker & {order: number}> {
+  const out = new Map<string, Walker & {order: number}>()
+  for (const [uid, raw] of Object.entries(hash)) {
+    try {
+      const w = JSON.parse(raw) as {n: string; a: string | null; i: number}
+      out.set(uid, {name: w.n, avatar: w.a, order: w.i})
+    } catch {
+      // A malformed entry only costs one face in the roster.
+    }
+  }
+  return out
 }
 
 async function view(
@@ -194,27 +273,42 @@ async function view(
 ): Promise<TonightRsp> {
   const exp = Number(u.exp)
   const valley = await valleyOf(day, exp)
-  const [litHash, sunkHash, walkers, streak] = await Promise.all([
-    redis.hGetAll(k.lit(day.key, exp)),
-    redis.hGetAll(k.sunk(day.key, exp)),
-    redis.hGet(k.meta(day.key, exp), 'walkers'),
-    streakOf(who.id, now),
-  ])
   const me = meOf(u)
+  const over = me.status !== 'walking'
+  const [litHash, sunkHash, walkers, streak, guided, rosterHash, stats] =
+    await Promise.all([
+      redis.hGetAll(k.lit(day.key, exp)),
+      redis.hGetAll(k.sunk(day.key, exp)),
+      redis.hGet(k.meta(day.key, exp), 'walkers'),
+      streakOf(who.id, now),
+      redis.hGet(k.guide(day.key), who.id),
+      redis.hGetAll(k.roster(day.key, exp)),
+      over ? redis.hGetAll(k.stats(day.key)) : Promise.resolve(null),
+    ])
+  const roster = rosterOf(rosterHash)
   const lit: [number, number][] = Object.keys(litHash).map(t => [
     Number(t),
     valley.counts[Number(t)] ?? 0,
   ])
-  const over = me.status !== 'walking'
   return {
     day: day.key,
     night: day.night,
     expedition: exp + 1,
     lit,
     sunk: Object.keys(sunkHash).map(Number),
+    sunkBy: Object.entries(sunkHash).map(([t, uid]) => [
+      Number(t),
+      roster.get(uid)?.name ?? 'a walker',
+    ]),
     walkers: Number(walkers ?? 1),
+    roster: [...roster.values()]
+      .sort((a, b) => b.order - a.order)
+      .slice(0, 8)
+      .map(w => ({name: w.name, avatar: w.avatar})),
     me,
-    streak,
+    streak: streak.n,
+    streakSaved: streak.saved,
+    guided: Number(guided ?? 0),
     result: over
       ? {
           ...score(
@@ -227,7 +321,25 @@ async function view(
           par: valley.par,
         }
       : null,
+    stats: stats ? [0, 1, 2, 3].map(i => Number(stats[i] ?? 0)) : null,
+    yesterday: null,
+    channel: channelOf(day, exp),
     nextAt: day.nextAt,
+  }
+}
+
+/** Last night's walk, for the welcome back line. */
+async function recap(who: Who, now: number): Promise<TonightRsp['yesterday']> {
+  const prev = dayOf(now - 86_400_000)
+  const [u, guided] = await Promise.all([
+    redis.hGetAll(k.user(prev.key, who.id)),
+    redis.hGet(k.guide(prev.key), who.id),
+  ])
+  if (!u.name) return null
+  return {
+    night: prev.night,
+    guided: Number(guided ?? 0),
+    status: meOf(u).status,
   }
 }
 
@@ -240,7 +352,9 @@ export async function tonight(
   let u = await redis.hGetAll(k.user(day.key, who.id))
   if (!u.name) u = await seat(day, who)
   if (!u.name) throw new HttpError(503, 'seating in progress, try again')
-  return view(day, who, u, now)
+  const rsp = await view(day, who, u, now)
+  if (rsp.me.legs === 0) rsp.yesterday = await recap(who, now)
+  return rsp
 }
 
 export async function leg(
@@ -280,7 +394,23 @@ export async function leg(
 
     // Lit tiles only ever get added, so concurrent walkers cannot conflict;
     // at worst two walkers both claim first light on the same tile.
-    const lit = new Set(Object.keys(await redis.hGetAll(litKey)).map(Number))
+    const owners = await redis.hGetAll(litKey)
+    const lit = new Set(Object.keys(owners).map(Number))
+    // Credit each walker whose light this walker used, once per pair.
+    const thanked = new Set((u.gu ?? '').split(',').filter(Boolean))
+    const newly: string[] = []
+    for (const t of out.walk) {
+      const owner = owners[t]
+      if (!owner || owner === who.id || thanked.has(owner)) continue
+      thanked.add(owner)
+      newly.push(owner)
+    }
+    if (newly.length > 0) {
+      await Promise.all(
+        newly.map(owner => redis.hIncrBy(k.guide(day.key), owner, 1)),
+      )
+      await expire(k.guide(day.key))
+    }
     const fields: Record<string, string> = {}
     let fresh = 0
     for (const t of out.walk) {
@@ -307,6 +437,7 @@ export async function leg(
       legs: `${me.legs + 1}`,
       st: status,
       fl: `${me.firstLight + fresh}`,
+      gu: [...thanked].join(','),
     }
     await redis.hSet(ukey, next)
     if (me.legs === 0) {
@@ -322,7 +453,21 @@ export async function leg(
         Number(next.fl),
       ).total
       await redis.zAdd(k.board(day.key), {member: who.name, score: total})
-      await expire(k.board(day.key))
+      await redis.hIncrBy(k.stats(day.key), `${out.arrived ? lanterns : 0}`, 1)
+      await expire(k.board(day.key), k.stats(day.key))
+    }
+    if (fresh > 0 || out.sunkAt !== null || out.arrived) {
+      await announce(
+        day,
+        exp,
+        {
+          by: who.name,
+          lit: fresh,
+          sunk: out.sunkAt !== null,
+          arrived: out.arrived,
+        },
+        now,
+      )
     }
     return {
       ...(await view(day, who, next, now)),
@@ -345,14 +490,50 @@ export async function peek(
     who
       ? redis.hGetAll(k.user(day.key, who.id))
       : Promise.resolve({} as Record<string, string>),
-    who ? streakOf(who.id, now) : Promise.resolve(0),
+    who ? streakOf(who.id, now) : Promise.resolve({n: 0, saved: false}),
   ])
+  const walkersToday = Number(seq ?? 0)
+  let litPct = 0
+  if (walkersToday > 0) {
+    // The viewer's own valley when they have one, otherwise the newest.
+    const exp = u.exp
+      ? Number(u.exp)
+      : Math.floor((walkersToday - 1) / EXPEDITION_SIZE)
+    const [valley, lit] = await Promise.all([
+      valleyOf(day, exp),
+      redis.hGetAll(k.lit(day.key, exp)),
+    ])
+    const dry = TILES - valley.bogs.filter(Boolean).length
+    litPct = Math.round((100 * Object.keys(lit).length) / dry)
+  }
   return {
     night: day.night,
-    walkersToday: Number(seq ?? 0),
+    walkersToday,
+    litPct,
     status: u.name ? meOf(u).status : 'new',
-    streak,
+    streak: streak.n,
   }
+}
+
+/** Opt-in: wear tonight's streak as subreddit flair. Only ever runs on the walker's own tap. */
+export async function wearFlair(
+  who: Who,
+  now: number = Date.now(),
+): Promise<FlairRsp> {
+  await rateLimit(who.id, now)
+  const {n} = await streakOf(who.id, now)
+  if (n < 2) throw new HttpError(409, 'walk two nights in a row first')
+  const subredditName = context.subredditName
+  if (!subredditName) throw new HttpError(503, 'no subreddit')
+  const text = `${n}-night lantern`
+  await reddit.setUserFlair({
+    subredditName,
+    username: who.name,
+    text,
+    backgroundColor: '#1a2350',
+    textColor: 'light',
+  })
+  return {text}
 }
 
 export async function board(now: number = Date.now()): Promise<BoardRsp> {

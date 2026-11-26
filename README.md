@@ -1,5 +1,7 @@
 # Wayglow
 
+![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-ffb547) ![Platform: Devvit Web](https://img.shields.io/badge/platform-Devvit%20Web-ff4500) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6) ![Tests: node:test](https://img.shields.io/badge/tests-node%3Atest-36c9b4)
+
 **One dark valley. Three lanterns. Every step you take stays lit for the walkers after you.**
 
 Wayglow is a daily game for Reddit, built on Devvit Web as an interactive post. Each night the community gets a valley hidden in darkness. Nobody can see all of it. Every walker lights the tiles they cross, for everyone, so the subreddit finds the way across together.
@@ -14,6 +16,12 @@ Wayglow is a daily game for Reddit, built on Devvit Web as an interactive post. 
 
 One ranked walk per night. A new valley opens at 00:00 UTC.
 
+Other controls:
+
+- **Mark a bog you suspect.** Press and hold a dark tile, or right-click it. Routes will not cross a mark. Marks are private.
+- **Keyboard.** Arrow keys plan, Shift with an arrow marks, Enter walks, Escape clears.
+- **Sound.** Synthesised in the browser; the button in the header turns it off.
+
 ### Scoring
 
 | Part                     | Points                                                  |
@@ -27,9 +35,15 @@ One ranked walk per night. A new valley opens at 00:00 UTC.
 - **Expeditions.** Walkers are grouped 40 to a valley, in order of arrival. What one walker lights, the other 39 can use.
 - **Sparks.** Each walker arrives with three sparks that light dry tiles somewhere up the valley, so every arrival adds something even before the first step.
 - **Useful failure.** A lost lantern is a warning sign for everyone else.
-- **Streaks.** Walk on consecutive nights to build one.
+- **Guides.** When another walker steps on a tile you lit first, you are credited once for that walker. The result card and the next night's welcome show how many walkers your light guided.
+- **Live.** A walker's new lights and sunk lanterns reach the rest of the expedition as they happen, with a short note saying who did it.
+- **The roster.** The header shows the snoovatars of the walkers most recently out in your expedition, and a sunk lantern remembers whose it was.
+- **How the night went.** The result card shows how many of tonight's walkers kept three, two, one or no lanterns.
+- **Streaks.** Walk on consecutive nights to build one. A streak of three or more survives one missed night, once a week. From two nights on you can choose to wear it as subreddit flair; nothing is set without your tap.
 
 ## How it is built
+
+![Architecture: client, Devvit server and Reddit platform](docs/architecture.png)
 
 ```
 src/shared/engine.ts   Rules: seeded valley generator, bog counts, lighting, route checks, scoring
@@ -39,6 +53,8 @@ src/server/server.ts   HTTP routes, menu action, install trigger, daily post job
 src/client/splash.ts   Feed card
 src/client/backdrop.ts Fog and lantern-heat shader
 src/client/fx.ts       Springs, count-up and easing helpers
+src/client/sfx.ts      Synthesised sounds
+src/client/social.ts   Live updates, roster faces, Journeys events
 src/client/game.ts     Canvas valley, route planning, walk animation, result card
 src/test/              In-memory Redis and a local preview server
 ```
@@ -48,6 +64,9 @@ src/test/              In-memory Redis and a local preview server
 - **No locks on shared state.** Lit tiles are only ever added, so walkers in the same expedition cannot conflict. A short per-walker lock, which expires on its own, stops double submits.
 - **Bounded keys.** Expeditions have a fixed size, so no Redis key grows with the size of the crowd.
 - **Retention.** Every key that names a walker expires within 30 days.
+- **Live updates are a bonus, not a dependency.** One realtime message per finished stretch, capped per second on the server; the client still polls.
+- **Devvit Journeys.** App ready, journey start on the first committed stretch, progress by distance up the valley, and an end event with the score. Reddit only records these once the app is published and approved.
+- **Reddit-side extras cannot break a walk.** Snoovatar lookups and live pushes are wrapped so a failure is logged and skipped.
 - **No external requests and no free-text input.**
 
 ### Look and motion

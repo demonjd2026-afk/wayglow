@@ -173,19 +173,161 @@
       display: none;
     }
     </style>
+    <style>
+    body {
+      grid-template-rows: auto auto 1fr auto;
+    }
+    #where {
+      flex: 0 1 auto;
+      text-align: left;
+    }
+    #valley:focus-visible {
+      outline: 2px solid rgba(255, 255, 255, 0.5);
+      outline-offset: -2px;
+    }
+    header .wordmark {
+      flex: 1;
+    }
+    .chip {
+      border: 0;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font: 600 11px var(--ui);
+      color: var(--mist);
+      background: rgba(160, 175, 255, 0.1);
+      cursor: pointer;
+    }
+    .chip[aria-pressed='false'] {
+      opacity: 0.6;
+    }
+    .chip:focus-visible {
+      outline: 2px solid #fff;
+      outline-offset: 2px;
+    }
+    #sub {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px 6px;
+      min-height: 26px;
+    }
+    #faces {
+      display: flex;
+    }
+    .face {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      margin-right: -6px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      font: 700 11px var(--ui);
+      color: #241503;
+      background: var(--ember);
+      box-shadow: 0 0 0 2px var(--night);
+    }
+    .face img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: var(--marsh);
+    }
+    #faces:not(:empty) {
+      margin-right: 8px;
+    }
+    #toast {
+      position: absolute;
+      left: 50%;
+      top: 8px;
+      transform: translateX(-50%);
+      max-width: calc(100% - 32px);
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      color: var(--wick);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      display: none;
+    }
+    #toast.show {
+      display: block;
+    }
+    #card-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      align-items: end;
+    }
+    #card-stats div {
+      display: grid;
+      gap: 4px;
+      justify-items: stretch;
+      align-items: end;
+      font-size: 11px;
+      color: var(--mist);
+      text-align: center;
+    }
+    #card-stats i {
+      border-radius: 5px 5px 2px 2px;
+      background: rgba(160, 175, 255, 0.28);
+    }
+    #card-stats .mine i {
+      background: linear-gradient(180deg, var(--wick), var(--ember));
+    }
+    #card-stats .mine {
+      color: var(--wick);
+    }
+    </style>
+    <style>
+    #card {
+      padding: 10px;
+    }
+    #card section {
+      gap: 9px;
+      padding: 18px 18px 16px;
+    }
+    #card h2 {
+      font-size: 24px;
+    }
+    #card p,
+    #card ol {
+      font-size: 13px;
+    }
+    #card dl {
+      font-size: 14px;
+      gap: 4px 12px;
+    }
+    #card .total {
+      font-size: 20px;
+      padding-top: 6px;
+    }
+    #card .btn {
+      padding: 11px 20px;
+    }
+    </style>
   </head>
   <body>
     <canvas id="backdrop" aria-hidden="true"></canvas>
     <header>
       <span class="wordmark">Wayglow</span>
-      <span id="where"></span>
+      <button id="sound-btn" class="chip" type="button" aria-pressed="true">
+        Sound on
+      </button>
       <span id="lanterns" role="img" aria-label="3 lanterns left"
         ><i></i><i></i><i></i></span
       >
     </header>
+    <div id="sub"><span id="faces"></span><span id="where"></span></div>
     <div id="stage">
-      <canvas id="valley" aria-label="Tonight's valley"></canvas>
+      <canvas id="valley" aria-label="Tonight's valley" tabindex="0"></canvas>
       <div id="loader"><div class="orb"></div></div>
+      <div id="toast" class="glass" role="status"></div>
       <div
         id="card"
         role="dialog"
@@ -196,9 +338,17 @@
           <h2 id="card-title">Tonight</h2>
           <p id="card-sub"></p>
           <dl id="card-score"></dl>
+          <p id="card-guided"></p>
+          <div
+            id="card-stats"
+            role="img"
+            aria-label="How tonight's walkers finished"
+          ></div>
           <p id="card-streak"></p>
           <ol id="card-board"></ol>
-          <p id="card-next"></p>
+          <button id="flair-btn" class="btn quiet" type="button" hidden>
+            Wear my streak as flair
+          </button>
           <button id="card-close" class="btn" type="button">
             See the valley
           </button>

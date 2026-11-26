@@ -1,4 +1,4 @@
-import {redis} from '@devvit/web/server'
+import {realtime, redis} from '@devvit/web/server'
 
 /** In-memory stand-in for the handful of Redis commands the game uses. */
 export const strings = new Map<string, string>()
@@ -59,7 +59,17 @@ r.zRange = async (key: string, start: number, stop: number) =>
     .sort((a, b) => b.score - a.score)
     .slice(start, stop + 1)
 
+/** Live messages the server tried to send, newest last. */
+export const sent: {channel: string; msg: unknown}[] = []
+;(realtime as unknown as Record<string, unknown>).send = async (
+  channel: string,
+  msg: unknown,
+) => {
+  sent.push({channel, msg})
+}
+
 export function resetFakeRedis(): void {
+  sent.length = 0
   strings.clear()
   hashes.clear()
   zsets.clear()

@@ -32,7 +32,9 @@
   },
   "permissions": {
     "redis": true,
-    "reddit": true
+    "reddit": true,
+    "realtime": true,
+    "journeys": true
   },
   "scheduler": {
     "tasks": {

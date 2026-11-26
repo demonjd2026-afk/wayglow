@@ -117,7 +117,8 @@ async function init(): Promise<void> {
       : peek.walkersToday === 1
         ? '1 walker out'
         : `${peek.walkersToday} walkers out`
-  stats.textContent = `Night ${peek.night}, ${out}${peek.streak > 1 ? `. Your streak: ${peek.streak} nights` : ''}`
+  const lit = peek.walkersToday > 0 ? `, valley ${peek.litPct}% lit` : ''
+  stats.textContent = `Night ${peek.night}, ${out}${lit}${peek.streak > 1 ? `. Your streak: ${peek.streak} nights` : ''}`
   if (peek.status === 'walking') startBtn.textContent = 'Continue your walk'
   else if (peek.status !== 'new') startBtn.textContent = "See tonight's valley"
 }

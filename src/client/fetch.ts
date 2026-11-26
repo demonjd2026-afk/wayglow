@@ -1,5 +1,6 @@
 import type {
   BoardRsp,
+  FlairRsp,
   LegReq,
   LegRsp,
   PeekRsp,
@@ -51,3 +52,5 @@ export const fetchBoard = (): Promise<BoardRsp | Failure> =>
   call<BoardRsp>(Endpoint.Board)
 export const fetchLeg = (req: LegReq): Promise<LegRsp | Failure> =>
   call<LegRsp>(Endpoint.Leg, req)
+export const fetchFlair = (): Promise<FlairRsp | Failure> =>
+  call<FlairRsp>(Endpoint.Flair, {})
