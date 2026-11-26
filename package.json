@@ -21,19 +21,23 @@
     "upload": "npm run clean && npm run build && devvit upload"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.6",
-    "@devvit/analytics": "^0.15.4",
-    "@devvit/web": "0.15.4",
+    "@biomejs/biome": "2.6.9",
+    "@devvit/analytics": "0.15.6",
+    "@devvit/web": "0.15.6",
     "@types/express": "^5.0.6",
     "@types/node": "24.19.2",
-    "devvit": "0.15.4",
+    "devvit": "0.15.6",
     "esbuild": "0.28.2",
     "express": "^5.3.0",
     "motion": "^14.14.0",
     "typescript": "7.0.2"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22.6.0"
   },
-  "description": "Wayglow: a daily game for Reddit where the community lights a dark valley together."
+  "description": "Wayglow: a daily game for Reddit where the community lights a dark valley together.",
+  "overrides": {
+    "isomorphic-git": "^1.44.19",
+    "tmp": "^0.2.7"
+  }
 }

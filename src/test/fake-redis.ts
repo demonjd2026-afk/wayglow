@@ -59,6 +59,12 @@ r.zRange = async (key: string, start: number, stop: number) =>
     .sort((a, b) => b.score - a.score)
     .slice(start, stop + 1)
 
+// Outside Reddit there is no snoovatar service; keep the expected skips out of test output.
+const warn = console.warn
+console.warn = (...args: unknown[]): void => {
+  if (!`${args[0]}`.endsWith('server request?')) warn(...args)
+}
+
 /** Live messages the server tried to send, newest last. */
 export const sent: {channel: string; msg: unknown}[] = []
 ;(realtime as unknown as Record<string, unknown>).send = async (
