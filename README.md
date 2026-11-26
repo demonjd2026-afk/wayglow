@@ -37,6 +37,8 @@ src/shared/api.ts      Request and response types shared by client and server
 src/server/game.ts     Seating, walking, streaks and the board, on Devvit Redis
 src/server/server.ts   HTTP routes, menu action, install trigger, daily post job
 src/client/splash.ts   Feed card
+src/client/backdrop.ts Fog and lantern-heat shader
+src/client/fx.ts       Springs, count-up and easing helpers
 src/client/game.ts     Canvas valley, route planning, walk animation, result card
 src/test/              In-memory Redis and a local preview server
 ```
@@ -47,6 +49,14 @@ src/test/              In-memory Redis and a local preview server
 - **Bounded keys.** Expeditions have a fixed size, so no Redis key grows with the size of the crowd.
 - **Retention.** Every key that names a walker expires within 30 days.
 - **No external requests and no free-text input.**
+
+### Look and motion
+
+- **Backdrop:** one hand-written WebGL fragment shader draws drifting fog and the heat of the lantern and the flame. No 3D library is loaded. Without WebGL a CSS gradient shows instead.
+- **Board:** Canvas 2D with pre-rendered tile sprites, so every frame is a few dozen image draws. Tiles rise in a wave, turn over when lit, and dim with distance from the lantern.
+- **Interface:** [Motion](https://motion.dev) drives the springs and staggered entrances.
+- **Type:** Fraunces, self-hosted from `public/fonts` under the SIL Open Font License.
+- **Reduced motion:** every animation is skipped or shortened when the device asks for it.
 
 Difficulty is tuned by a test that sends a careful, logic-first walker alone into hundreds of dark valleys for each weekday and checks how often it crosses.
 

@@ -1,0 +1,177 @@
+@font-face {
+  font-family: 'Fraunces';
+  src: url('fonts/fraunces.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@property --beam {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+:root {
+  color-scheme: dark;
+  --night: #070b1a;
+  --marsh: #121a3a;
+  --ember: #ffb547;
+  --wick: #fff1cf;
+  --bog: #36c9b4;
+  --mist: #a9b4d8;
+  --display: 'Fraunces', Georgia, serif;
+  --ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  width: 100dvw;
+  height: 100dvh;
+  overflow: hidden;
+  background: radial-gradient(
+    120% 80% at 50% 100%,
+    #1a1430 0%,
+    var(--night) 60%
+  );
+  color: var(--wick);
+  font-family: var(--ui);
+  -webkit-font-smoothing: antialiased;
+}
+#backdrop {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+}
+.wordmark {
+  font-family: var(--display);
+  font-weight: 560;
+  letter-spacing: 0.01em;
+  color: var(--wick);
+  text-shadow: 0 0 22px rgba(255, 181, 71, 0.55);
+}
+.btn {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  padding: 13px 22px;
+  cursor: pointer;
+  font: 650 16px var(--ui);
+  color: #241503;
+  background: linear-gradient(
+    180deg,
+    #ffd27d 0%,
+    var(--ember) 55%,
+    #f09a2c 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 6px 22px rgba(255, 160, 50, 0.35);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 65%
+  );
+  transform: translateX(-120%);
+  animation: sheen 3.6s ease-in-out infinite;
+}
+.btn.quiet {
+  color: var(--wick);
+  background: rgba(160, 175, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(160, 175, 255, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.btn.quiet::after {
+  display: none;
+}
+.btn:disabled {
+  cursor: default;
+  filter: saturate(0.4) brightness(0.6);
+  box-shadow: none;
+}
+.btn:disabled::after {
+  display: none;
+}
+.btn:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+.glass {
+  background: linear-gradient(
+    160deg,
+    rgba(40, 50, 100, 0.55),
+    rgba(14, 18, 42, 0.72)
+  );
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.beam {
+  position: relative;
+}
+.beam::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--beam),
+    rgba(160, 175, 255, 0.18) 0 62%,
+    var(--ember) 82%,
+    var(--wick) 90%,
+    rgba(160, 175, 255, 0.18) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: beam 5s linear infinite;
+  pointer-events: none;
+}
+@keyframes sheen {
+  0%,
+  55% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+@keyframes beam {
+  to {
+    --beam: 360deg;
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(0.86);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn::after,
+  .beam::before,
+  .orb {
+    animation: none;
+  }
+}

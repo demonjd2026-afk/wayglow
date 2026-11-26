@@ -17,6 +17,8 @@ const types: Record<string, string> = {
   '.js': 'text/javascript',
   '.map': 'application/json',
   '.png': 'image/png',
+  '.css': 'text/css',
+  '.woff2': 'font/woff2',
 }
 const port = Number(process.env.PORT ?? 5173)
 
